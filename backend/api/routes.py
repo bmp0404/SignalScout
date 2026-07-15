@@ -10,6 +10,11 @@ from backend.container import Container
 def build_router(container: Container) -> APIRouter:
     router = APIRouter(prefix="/api")
 
+    @router.get("/health")
+    def health():
+        container.db.conn.execute("SELECT 1").fetchone()
+        return {"status": "ok", "db": container.db.backend}
+
     @router.get("/overview")
     def overview():
         backtest = container.backtest.run()
