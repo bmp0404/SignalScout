@@ -19,30 +19,7 @@ export default function DigestSignup() {
     if (status === 'error') setStatus('idle');
   };
 
-  const sendTestDigest = async (currentSubscription) => {
-    setStatus('sending');
-    setMessage('Building and sending your test digest…');
-    try {
-      const result = await api.sendTestDigest({
-        email: currentSubscription.email,
-      });
-      setStatus('sent');
-      setMessage(result.message);
-    } catch (error) {
-      if (error.status === 503) {
-        setStatus('configuration');
-        setMessage("Email delivery isn't configured yet.");
-      } else if (error.status === 429) {
-        setStatus('rate-limit');
-        setMessage('A test digest was already sent recently. Please try again after 24 hours.');
-      } else {
-        setStatus('error');
-        setMessage(error.message || "We couldn't send your test digest. Please try again.");
-      }
-    }
-  };
-
-  const subscribe = async (sendTest) => {
+  const subscribe = async () => {
     if (!form.email.trim()) {
       setStatus('error');
       setMessage('Add an email address to join the digest.');
@@ -58,10 +35,6 @@ export default function DigestSignup() {
         seed_accounts: form.seedAccounts.trim(),
       });
       setSubscription(result);
-      if (sendTest) {
-        await sendTestDigest(result);
-        return;
-      }
       setStatus('success');
       setMessage(result.message);
     } catch {
@@ -77,34 +50,15 @@ export default function DigestSignup() {
     setStatus('idle');
   };
 
-  const busy = status === 'subscribing' || status === 'sending';
+  const busy = status === 'subscribing';
 
   if (subscription) {
-    const heading = status === 'sent' ? 'Check your inbox.' : 'Early signals, delivered.';
     return (
       <section className="bg-olive text-cream border border-olive-dark rounded-md px-6 py-5 mb-8">
         <p className="font-mono text-[10px] tracking-widest uppercase text-cream/70">Digest confirmed</p>
-        <h2 className="font-display text-2xl mt-1">{heading}</h2>
+        <h2 className="font-display text-2xl mt-1">Early signals, delivered.</h2>
         <p role="status" className="text-sm mt-2 text-cream/90">{message}</p>
         <div className="flex flex-col items-start sm:flex-row sm:items-center gap-3 mt-4">
-          {status === 'success' && (
-            <button
-              type="button"
-              onClick={() => sendTestDigest(subscription)}
-              className="bg-cream text-olive-dark font-mono text-[10px] tracking-widest px-5 py-2.5 rounded-sm"
-            >
-              SEND ME A TEST DIGEST
-            </button>
-          )}
-          {status === 'error' && (
-            <button
-              type="button"
-              onClick={() => sendTestDigest(subscription)}
-              className="bg-cream text-olive-dark font-mono text-[10px] tracking-widest px-5 py-2.5 rounded-sm"
-            >
-              TRY SENDING AGAIN
-            </button>
-          )}
           <button
             type="button"
             onClick={reset}
@@ -132,7 +86,7 @@ export default function DigestSignup() {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          subscribe(false);
+          subscribe();
         }}
         className="grid gap-3"
       >
@@ -169,14 +123,6 @@ export default function DigestSignup() {
             className="bg-olive hover:bg-olive-dark disabled:bg-ink-faint text-cream font-mono text-[10px] tracking-widest px-5 py-2.5 rounded-sm h-[38px]"
           >
             {status === 'subscribing' ? 'SIGNING UP…' : 'JOIN THE DIGEST'}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => subscribe(true)}
-            className="border border-olive text-olive hover:bg-olive hover:text-cream disabled:border-ink-faint disabled:text-ink-faint font-mono text-[10px] tracking-widest px-5 py-2.5 rounded-sm h-[38px]"
-          >
-            {busy ? 'SENDING…' : 'SEND ME A TEST DIGEST'}
           </button>
         </div>
         <details className="group">
