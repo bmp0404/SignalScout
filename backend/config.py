@@ -30,6 +30,12 @@ class Settings:
     discovery_seed_limit: int = field(default_factory=lambda: int(os.environ.get("DISCOVERY_SEED_LIMIT", "4")))
     discovery_max_per_seed: int = field(default_factory=lambda: int(os.environ.get("DISCOVERY_MAX_PER_SEED", "30")))
 
+    # Licensed enrichment (Phase 1). Missing key -> provider None -> enrichment no-ops.
+    enrichment_provider: str = field(default_factory=lambda: os.environ.get("ENRICHMENT_PROVIDER", "pdl"))
+    pdl_api_key: str = field(default_factory=lambda: os.environ.get("PDL_API_KEY", ""))
+    coresignal_api_key: str = field(default_factory=lambda: os.environ.get("CORESIGNAL_API_KEY", ""))
+    daily_enrichment_budget: int = field(default_factory=lambda: int(os.environ.get("DAILY_ENRICHMENT_BUDGET", "100")))
+
 
 def load_settings() -> Settings:
     return Settings()
