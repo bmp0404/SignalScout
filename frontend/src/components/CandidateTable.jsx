@@ -53,6 +53,9 @@ export default function CandidateTable({
   const providerCount = candidates.filter(
     (candidate) => candidate.discovery_origin === 'provider_search',
   ).length;
+  const crossSourceCount = candidates.filter(
+    (candidate) => (candidate.source_diversity || 0) >= 2,
+  ).length;
 
   const toggleSort = (key) => {
     if (key === sortKey) setSortDesc(!sortDesc);
@@ -81,7 +84,7 @@ export default function CandidateTable({
             </button>
           ))}
           <span className="label-mono ml-auto">
-            {providerCount} provider-discovered / {candidates.length} total
+            {providerCount} provider-discovered · {crossSourceCount} cross-source · {candidates.length} total
           </span>
         </div>
       )}
@@ -159,16 +162,11 @@ export default function CandidateTable({
                     )}
                   </div>
                   <div className="text-right">
-                    <p className="label-mono">signal score</p>
-                    <p className="font-mono text-lg text-olive">{Math.round(c.score)}</p>
+                    <p className="font-mono text-2xl text-olive">{Math.round(c.score)}</p>
+                    <p className="label-mono">{c.signal_count} signals</p>
                   </div>
                 </div>
-                {c.why_now && (
-                  <div className="mt-4 pl-3 border-l-2 border-olive">
-                    <p className="label-mono text-olive mb-1">why now</p>
-                    <p className="text-[15px] text-ink leading-relaxed">{c.why_now}</p>
-                  </div>
-                )}
+                {c.thesis && <p className="text-sm text-ink-soft mt-3 italic">{c.thesis}</p>}
                 {c.source_counts && Object.keys(c.source_counts).length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 mt-3" aria-label={`Sources for ${c.name}`}>
                     <span className="label-mono text-ink-faint mr-1">sources</span>

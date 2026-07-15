@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS provider_search_checkpoints (
     merged_count INTEGER NOT NULL DEFAULT 0,
     duplicate_count INTEGER NOT NULL DEFAULT 0,
     rejected_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
     rejection_reasons TEXT NOT NULL DEFAULT '{}',
     last_outcome TEXT NOT NULL DEFAULT 'never_run',
     updated_at TEXT NOT NULL,

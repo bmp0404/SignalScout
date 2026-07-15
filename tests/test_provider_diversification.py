@@ -412,6 +412,7 @@ class ProviderSearchTests(ChainTestBase):
         self.assertEqual(checkpoint.next_page, 0)
         self.assertEqual(checkpoint.requested_pages, 1)
         self.assertEqual(checkpoint.api_requests, 1)
+        self.assertEqual(checkpoint.error_count, 1)
         self.assertEqual(checkpoint.last_outcome, "error:HTTP 500")
         self.assertEqual(
             self.usage.count_for_month(
@@ -522,6 +523,7 @@ class EnrichmentQueueTests(ChainTestBase):
         payload = service.list_candidates("discovery")[0]
 
         self.assertEqual(payload["discovery_origin"], "provider_search")
+        self.assertEqual(payload["evidence_status"], "review")
         self.assertEqual(payload["evidence_tier"], "review")
         self.assertTrue(payload["review_required"])
         self.assertEqual(payload["enrichment_status"], "provider_enriched")
@@ -644,10 +646,18 @@ class AdapterHttpMockTests(unittest.TestCase):
 
         page = provider.search_page({"school": "MIT"}, size=1, cursor="1")
 
-        self.assertEqual(page.next_cursor, "2")
+        self.assertEqual(json.loads(page.next_cursor)["offset"], 2)
         self.assertEqual(page.api_requests, 2)
         self.assertEqual(page.credit_units, 2)
         self.assertEqual(page.results[0].provider_person_id, "c2")
+
+        resumed = provider.search_page(
+            {"school": "MIT"},
+            size=1,
+            cursor=page.next_cursor,
+        )
+        self.assertEqual(session.post_calls, 1)
+        self.assertEqual(resumed.api_requests, 1)
 
 
 class BacktestRegressionTests(unittest.TestCase):
@@ -685,11 +695,13 @@ class _DummySession:
         self.get_response = _Resp(404, {})
         self.post_response = _Resp(200, {"data": []})
         self.last_post_json = None
+        self.post_calls = 0
 
     def get(self, url, **kwargs):
         return self.get_response
 
     def post(self, url, **kwargs):
+        self.post_calls += 1
         self.last_post_json = kwargs.get("json")
         return self.post_response
 

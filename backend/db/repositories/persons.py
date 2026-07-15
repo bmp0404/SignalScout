@@ -141,8 +141,7 @@ class PersonRepository(BaseRepository):
                         not row["github_username"]
                         and (
                             bool(row["has_provider_identity"])
-                            or contact.get("discovered_via")
-                            in ("pdl", "coresignal")
+                            or contact.get("discovered_via") in ("pdl", "coresignal")
                         )
                     )
                 )
@@ -178,14 +177,9 @@ class PersonRepository(BaseRepository):
             if origin == "github" and not enrichment_status:
                 enrichment_provider = contact.get("enriched_by")
                 enrichment_status = (
-                    "provider_enriched"
-                    if enrichment_provider
-                    else "pending_budget"
+                    "provider_enriched" if enrichment_provider else "pending_budget"
                 )
-            elif (
-                enrichment_status == "provider_enriched"
-                and not enrichment_provider
-            ):
+            elif enrichment_status == "provider_enriched" and not enrichment_provider:
                 enrichment_provider = contact.get("enriched_by")
 
             if (

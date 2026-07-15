@@ -60,23 +60,6 @@ export default function EvidencePanel({ personId, onClose }) {
 
         <ContactLinks links={profile.contact_links} className="mt-3" />
 
-        {profile.why_now && (
-          <section className="mt-6 bg-card border border-olive/40 rounded-md p-5">
-            <h3 className="label-mono text-olive mb-2">why now</h3>
-            <p className="text-lg leading-relaxed">{profile.why_now}</p>
-            {profile.primary_evidence_url && (
-              <a
-                href={profile.primary_evidence_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block mt-3 font-mono text-[10px] tracking-widest text-olive underline"
-              >
-                PRIMARY PUBLIC EVIDENCE ↗
-              </a>
-            )}
-          </section>
-        )}
-
         {profile.source_counts && Object.keys(profile.source_counts).length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 mt-4">
             <span className="label-mono text-ink-faint mr-1">evidence sources</span>
@@ -91,7 +74,7 @@ export default function EvidencePanel({ personId, onClose }) {
           </div>
         )}
 
-        <h3 className="label-mono mt-8 mb-3">supporting evidence · score {Math.round(profile.score)} / 100</h3>
+        <h3 className="label-mono mt-8 mb-3">score receipt — {Math.round(profile.score)} / 100</h3>
         <div className="bg-card border border-line rounded-md overflow-hidden">
           <table className="w-full text-[12.5px]">
             <thead>

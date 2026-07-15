@@ -10,6 +10,7 @@ first-seen proxy, not the true LinkedIn signup date. It maps to
 `profile_created_at` and is treated as an upper bound on profile age.
 """
 
+import json
 import logging
 from urllib.parse import quote, urlparse
 
@@ -85,20 +86,21 @@ class CoresignalProvider(EnrichmentProvider):
     ) -> ProviderSearchPage:
         """Independent Coresignal search. `filters` keys are ALLOWLISTED
         (SEARCH_FILTERS); unknown keys are ignored so no arbitrary filter reaches
-        the request. The checkpoint is an offset into the stable returned ID
-        list, so completed collect pages are never collected again."""
+        the request. New checkpoints carry the returned ID list in an opaque
+        cursor, avoiding a repeat filter request on resume. Numeric cursors from
+        older checkpoints remain supported and safely re-fetch the ID list."""
         self.last_error = None
         allowed = self._build_filters(filters)
         if not allowed:
             return ProviderSearchPage()
         limit = max(1, min(size, MAX_SEARCH_SIZE))
-        try:
-            offset = max(0, int(cursor or 0))
-        except (TypeError, ValueError):
-            offset = 0
-        ids = self._search(allowed)
-        if self.last_error:
-            return ProviderSearchPage(api_requests=1)
+        offset, ids = self._resume_state(cursor)
+        search_requests = 0
+        if ids is None:
+            ids = self._search(allowed)
+            search_requests = 1
+            if self.last_error:
+                return ProviderSearchPage(api_requests=1)
         selected = ids[offset:offset + limit]
         results = []
         for record_id in selected:
@@ -108,15 +110,36 @@ class CoresignalProvider(EnrichmentProvider):
         has_more = offset + len(selected) < len(ids)
         return ProviderSearchPage(
             results=results,
-            next_cursor=str(offset + len(selected)) if has_more else None,
+            next_cursor=(
+                json.dumps(
+                    {"offset": offset + len(selected), "ids": ids},
+                    separators=(",", ":"),
+                )
+                if has_more
+                else None
+            ),
             exhausted=not has_more,
-            # One filter request plus one collect request per selected ID.
-            api_requests=1 + len(selected),
+            api_requests=search_requests + len(selected),
             returned_records=len(results),
-            # Conservatively account collect attempts as usage; this is not
-            # presented as a statement about an account's invoice.
-            credit_units=1 + len(selected),
+            # This is an internal conservative request-unit ledger, not a claim
+            # about Coresignal invoice semantics.
+            credit_units=search_requests + len(selected),
         )
+
+    @staticmethod
+    def _resume_state(cursor: str | None) -> tuple[int, list | None]:
+        if not cursor:
+            return 0, None
+        try:
+            payload = json.loads(cursor)
+            if isinstance(payload, dict) and isinstance(payload.get("ids"), list):
+                return max(0, int(payload.get("offset", 0))), payload["ids"]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        try:
+            return max(0, int(cursor)), None
+        except (TypeError, ValueError):
+            return 0, None
 
     @staticmethod
     def _build_filters(filters: dict) -> dict:

@@ -9,7 +9,7 @@ import SourceMix from '../components/SourceMix.jsx';
 
 const POLL_MS = 1200;
 
-export default function Discover({ coryMode = false }) {
+export default function Discover({ showOperatorControls = false }) {
   const [candidates, setCandidates] = useState([]);
   const [index, setIndex] = useState(0);
   const [browseAll, setBrowseAll] = useState(true);
@@ -102,9 +102,9 @@ export default function Discover({ coryMode = false }) {
 
   return (
     <div>
-      {!coryMode && <DigestSignup />}
+      <DigestSignup />
       <div className="flex items-center justify-between mb-6">
-        {!coryMode && <div className="flex gap-1">
+        {showOperatorControls && <div className="flex gap-1">
           {[['discovery', 'DISCOVERIES'], ['founder', 'GROUND TRUTH']].map(([value, label]) => (
             <button
               key={value}
@@ -118,7 +118,7 @@ export default function Discover({ coryMode = false }) {
           ))}
         </div>}
         <div className="flex items-center gap-4">
-          {!coryMode && <button
+          {showOperatorControls && <button
             onClick={runDiscovery}
             disabled={running}
             className="bg-olive hover:bg-olive-dark disabled:bg-ink-faint text-cream font-mono text-[10px] tracking-widest px-4 py-1.5 rounded-sm transition-colors"
@@ -134,7 +134,7 @@ export default function Discover({ coryMode = false }) {
         </div>
       </div>
 
-      {!coryMode && runError && (
+      {showOperatorControls && runError && (
         <div role="alert" className="border border-red-300 bg-red-50 rounded-sm px-4 py-3 mb-4 text-center">
           <p className="text-sm text-red-700">{runError}</p>
           <button onClick={runDiscovery} className="font-mono text-[10px] tracking-widest text-red-700 underline mt-1">
@@ -142,7 +142,7 @@ export default function Discover({ coryMode = false }) {
           </button>
         </div>
       )}
-      {!coryMode && <PipelineProgress status={jobStatus} />}
+      {showOperatorControls && <PipelineProgress status={jobStatus} />}
       {cohort === 'discovery' && <SourceMix mix={sourceMix} />}
 
       {loadState === 'loading' ? (
@@ -173,8 +173,8 @@ export default function Discover({ coryMode = false }) {
           candidates={candidates}
           onSelect={(c) => setEvidenceId(c.id)}
           highlightIds={newIds}
-          defaultView={coryMode || cohort !== 'discovery' ? 'all' : 'provider'}
-          defaultUnknownsOnly={!coryMode}
+          defaultView={cohort === 'discovery' ? 'provider' : 'all'}
+          defaultUnknownsOnly={cohort === 'discovery'}
         />
       ) : (
         <>

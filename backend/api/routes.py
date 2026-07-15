@@ -20,7 +20,7 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 class SubscriberSignup(BaseModel):
     email: str = Field(min_length=3, max_length=320)
-    frequency: str = "weekly"
+    frequency: str = "daily"
     signal_interests: str = Field(default="", max_length=1000)
     seed_accounts: str = Field(default="", max_length=4000)
 
@@ -209,8 +209,7 @@ def build_router(container: Container) -> APIRouter:
         return profile
 
     @router.get("/backtest")
-    def backtest(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def backtest():
         return container.backtest.run()
 
     @router.get("/concentrations")

@@ -9,6 +9,7 @@
 - The end audience for the product/demo is an investor named Cory; framing and "warm signal" logic should optimize for what Cory would trust.
 - Do not scrape LinkedIn; obtain LinkedIn and contact data through licensed/compliant enrichment providers instead.
 - Source diversification must be visible in the resulting candidates and signals; provider code is not complete until it actually populates credible non-GitHub discoveries when configured.
+- Keep Discover, Backtest, and Digest as useful public product features; hide only destructive or operator-only controls rather than broadly suppressing functionality for a Cory release.
 
 ## Learned Workspace Facts
 

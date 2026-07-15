@@ -5,6 +5,7 @@ predates it and is never reset/rebuilt. Backs the dedupe ladder in
 provider_expansion: (provider, provider_person_id) -> canonical LinkedIn URL.
 """
 
+import sqlite3
 from dataclasses import dataclass, field
 
 from backend.db.database import Database
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS provider_search_checkpoints (
     merged_count INTEGER NOT NULL DEFAULT 0,
     duplicate_count INTEGER NOT NULL DEFAULT 0,
     rejected_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
     rejection_reasons TEXT NOT NULL DEFAULT '{}',
     last_outcome TEXT NOT NULL DEFAULT 'never_run',
     updated_at TEXT NOT NULL,
@@ -62,6 +64,7 @@ class ProviderSearchCheckpoint:
     merged_count: int = 0
     duplicate_count: int = 0
     rejected_count: int = 0
+    error_count: int = 0
     rejection_reasons: dict[str, int] = field(default_factory=dict)
     last_outcome: str = "never_run"
     updated_at: str = ""
@@ -87,6 +90,7 @@ class ProviderIdentityRepository(BaseRepository):
     def __init__(self, db: Database):
         super().__init__(db)
         self.conn.executescript(TABLE_SQL)
+        self._ensure_checkpoint_columns()
         self.conn.commit()
 
     def find_person_by_provider_id(self, provider: str, provider_person_id: str) -> str | None:
@@ -144,6 +148,7 @@ class ProviderIdentityRepository(BaseRepository):
             merged_count=row["merged_count"],
             duplicate_count=row["duplicate_count"],
             rejected_count=row["rejected_count"],
+            error_count=row["error_count"],
             rejection_reasons=self.loads(row["rejection_reasons"], {}),
             last_outcome=row["last_outcome"],
             updated_at=row["updated_at"],
@@ -183,6 +188,7 @@ class ProviderIdentityRepository(BaseRepository):
             merged_count=checkpoint.merged_count + outcomes.get("merged", 0),
             duplicate_count=checkpoint.duplicate_count + outcomes.get("duplicate", 0),
             rejected_count=checkpoint.rejected_count + outcomes.get("rejected", 0),
+            error_count=checkpoint.error_count + int(last_outcome.startswith("error:")),
             rejection_reasons=reasons,
             last_outcome=last_outcome,
             updated_at=updated_at,
@@ -192,8 +198,8 @@ class ProviderIdentityRepository(BaseRepository):
                (provider, filter_identity, filters_json, cursor, next_page, exhausted,
                 requested_pages, api_requests, returned_records, credit_units,
                 verified_count, review_count, merged_count, duplicate_count,
-                rejected_count, rejection_reasons, last_outcome, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rejected_count, error_count, rejection_reasons, last_outcome, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 updated.provider,
                 updated.filter_identity,
@@ -210,6 +216,7 @@ class ProviderIdentityRepository(BaseRepository):
                 updated.merged_count,
                 updated.duplicate_count,
                 updated.rejected_count,
+                updated.error_count,
                 self.dumps(updated.rejection_reasons),
                 updated.last_outcome,
                 updated.updated_at,
@@ -217,6 +224,29 @@ class ProviderIdentityRepository(BaseRepository):
         )
         self.conn.commit()
         return updated
+
+    def _ensure_checkpoint_columns(self) -> None:
+        if self.db.backend == "postgres":
+            rows = self.conn.execute(
+                """SELECT column_name AS name FROM information_schema.columns
+                   WHERE table_schema = 'public'
+                     AND table_name = 'provider_search_checkpoints'"""
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "PRAGMA table_info(provider_search_checkpoints)"
+            ).fetchall()
+        if "error_count" not in {row["name"] for row in rows}:
+            statement = (
+                "ALTER TABLE provider_search_checkpoints "
+                + ("ADD COLUMN IF NOT EXISTS " if self.db.backend == "postgres" else "ADD COLUMN ")
+                + "error_count INTEGER NOT NULL DEFAULT 0"
+            )
+            try:
+                self.conn.execute(statement)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
     def ensure_checkpoint(
         self,

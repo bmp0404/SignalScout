@@ -160,6 +160,7 @@ class CandidateService:
             "contact_links": person.display_contacts(),
             "coverage": self._coverage(sigs),
             "discovery_origin": person.discovery_origin,
+            "evidence_status": person.evidence_tier or "not_applicable",
             "evidence_tier": person.evidence_tier,
             "review_required": person.review_required,
             "enrichment_status": person.enrichment_status,

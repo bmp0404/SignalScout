@@ -1,4 +1,4 @@
-async function request(path, options = {}) {
+async function request(path, options) {
   const resp = await fetch(path, options);
   if (!resp.ok) {
     let detail = `${resp.status} ${resp.statusText}`;
@@ -21,7 +21,15 @@ export const api = {
   candidate: (id) => request(`/api/candidates/${id}`),
   backtest: () => request('/api/backtest'),
   concentrations: () => request('/api/concentrations'),
+  latestDigest: () => request('/api/digests/latest'),
+  generateDigest: () => request('/api/digests/generate', { method: 'POST' }),
+  sendDigest: () => request('/api/digests/send', { method: 'POST' }),
   subscribe: (payload) => request('/api/subscribers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
+  sendTestDigest: (payload) => request('/api/digest/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -31,4 +39,6 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   }),
+  runDiscovery: () => request('/api/discovery/run', { method: 'POST' }),
+  discoveryStatus: () => request('/api/discovery/status'),
 };

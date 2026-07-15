@@ -42,15 +42,15 @@ export default function CandidateCard({ candidate, rank, onViewEvidence }) {
         <p className="font-mono text-[11px] text-ink-faint mt-1.5">{schoolLine}</p>
         {locationLine && <p className="font-mono text-[11px] text-ink-faint mt-0.5">{locationLine}</p>}
 
-        {c.why_now && (
+        <p className="label-mono mt-6">signal score</p>
+        <p className="font-mono text-5xl text-olive mt-1">{Math.round(c.score)}</p>
+
+        {c.thesis && (
           <div className="mt-6 max-w-lg">
-            <p className="label-mono text-olive mb-2">why now</p>
-            <p className="text-lg leading-relaxed text-ink">{c.why_now}</p>
+            <p className="label-mono mb-2">thesis</p>
+            <p className="text-[15px] leading-relaxed text-ink-soft italic">{c.thesis}</p>
           </div>
         )}
-
-        <p className="label-mono mt-6">signal score</p>
-        <p className="font-mono text-2xl text-olive mt-1">{Math.round(c.score)}</p>
 
         <div className="flex flex-wrap justify-center gap-2 mt-6">
           {(c.top_signals || []).map((s, i) => <SignalBadge key={i} signal={s} />)}
