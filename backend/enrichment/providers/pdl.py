@@ -43,6 +43,7 @@ class PdlProvider(EnrichmentProvider):
         self.session.headers.update({"X-Api-Key": api_key, "Accept": "application/json"})
 
     def enrich_person(self, query: EnrichmentQuery) -> EnrichmentResult | None:
+        self.last_error = None
         params: dict = {"min_likelihood": self.min_likelihood, "titlecase": "true"}
         profiles = []
         if query.linkedin_url:
@@ -86,11 +87,11 @@ class PdlProvider(EnrichmentProvider):
         try:
             resp = self.session.get(f"{API}{path}", params=params, timeout=20)
             if resp.status_code == 404:
-                return None  # no confident match — normal, not an error
-            if resp.status_code == 402:
-                logger.warning("PDL out of credits (402) — enrichment skipped")
-                return None
+                return None  # no confident match — a definitive, cacheable miss
             if resp.status_code != 200:
+                # 401 bad key / 402 out of credits / 429 / 5xx: transient or
+                # account-level — surface via last_error so it is never cached.
+                self.last_error = f"HTTP {resp.status_code}"
                 logger.warning("PDL %s -> %s: %s", path, resp.status_code, resp.text[:200])
                 return None
             payload = resp.json()
@@ -99,6 +100,7 @@ class PdlProvider(EnrichmentProvider):
                 return None
             return payload.get("data")
         except requests.RequestException as exc:
+            self.last_error = str(exc)
             logger.warning("PDL request failed %s: %s", path, exc)
             return None
 

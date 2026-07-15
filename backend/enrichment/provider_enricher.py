@@ -130,6 +130,14 @@ class ProviderEnricher:
             linkedin_url=person.linkedin_url,
         )
         result = self.provider.enrich_person(query)
+        if result is None and self.provider.last_error:
+            # Auth / credits / network failure — not a real miss: don't burn a
+            # 30-day cache slot or a budget credit on it.
+            logger.warning(
+                "%s enrichment failed for %s (%s) — not cached",
+                self.provider.name, person.name, self.provider.last_error,
+            )
+            return None
         self.usage.increment(today)
         self.cache.put(
             self.provider.name, person.id,

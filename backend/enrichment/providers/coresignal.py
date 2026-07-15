@@ -33,6 +33,7 @@ class CoresignalProvider(EnrichmentProvider):
         self.session.headers.update({"apikey": api_key, "Accept": "application/json"})
 
     def enrich_person(self, query: EnrichmentQuery) -> EnrichmentResult | None:
+        self.last_error = None
         filters: dict = {}
         if query.linkedin_url:
             # Shorthand (slug) match is the precise employee_base filter for a known profile.
@@ -62,12 +63,16 @@ class CoresignalProvider(EnrichmentProvider):
     def _search(self, filters: dict) -> list:
         try:
             resp = self.session.post(f"{API}/employee_base/search/filter", json=filters, timeout=20)
+            if resp.status_code == 404:
+                return []  # definitive no-match — cacheable
             if resp.status_code != 200:
+                self.last_error = f"HTTP {resp.status_code}"  # auth/credits/5xx: never cache
                 logger.warning("Coresignal search -> %s: %s", resp.status_code, resp.text[:200])
                 return []
             payload = resp.json()
             return payload if isinstance(payload, list) else []
         except requests.RequestException as exc:
+            self.last_error = str(exc)
             logger.warning("Coresignal search request failed: %s", exc)
             return []
 
@@ -75,10 +80,12 @@ class CoresignalProvider(EnrichmentProvider):
         try:
             resp = self.session.get(f"{API}/employee_base/collect/{record_id}", timeout=20)
             if resp.status_code != 200:
+                self.last_error = f"HTTP {resp.status_code}"
                 logger.warning("Coresignal collect %s -> %s: %s", record_id, resp.status_code, resp.text[:200])
                 return None
             return resp.json()
         except requests.RequestException as exc:
+            self.last_error = str(exc)
             logger.warning("Coresignal collect request failed: %s", exc)
             return None
 

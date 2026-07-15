@@ -67,6 +67,10 @@ class EnrichmentResult:
 
 class EnrichmentProvider(ABC):
     name: str = "provider"
+    # Set by adapters on every enrich_person call: None after a definitive answer
+    # (match or clean no-match, safe to cache), an error message after auth /
+    # network / server failures (must NOT be cached as a 30-day miss).
+    last_error: str | None = None
 
     @abstractmethod
     def enrich_person(self, query: EnrichmentQuery) -> EnrichmentResult | None:
