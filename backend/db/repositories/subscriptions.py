@@ -1,5 +1,7 @@
 """Persistence for subscribers, never-repeat sends, and feedback votes."""
 
+from datetime import datetime
+
 from backend.db.repositories.base import BaseRepository
 from backend.domain.subscriber import Subscriber, utc_now
 
@@ -88,6 +90,15 @@ class SubscriberRepository(BaseRepository):
 
 
 class DigestSendRepository(BaseRepository):
+    def sent_since(self, subscriber_id: str, since: datetime) -> bool:
+        row = self.conn.execute(
+            """SELECT 1 FROM digest_sends
+               WHERE subscriber_id = ? AND sent_at >= ?
+               LIMIT 1""",
+            (subscriber_id, since.isoformat(timespec="seconds")),
+        ).fetchone()
+        return row is not None
+
     def sent_person_ids(self, subscriber_id: str) -> set[str]:
         rows = self.conn.execute(
             "SELECT person_id FROM digest_sends WHERE subscriber_id = ?",

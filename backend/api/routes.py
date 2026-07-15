@@ -4,6 +4,7 @@ import hmac
 import html
 import re
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -20,6 +21,11 @@ class SubscriberSignup(BaseModel):
     frequency: str = "daily"
     signal_interests: str = Field(default="", max_length=1000)
     seed_accounts: str = Field(default="", max_length=4000)
+
+
+class TestDigestRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    token: str = Field(min_length=1, max_length=200)
 
 
 class PageViewEvent(BaseModel):
@@ -59,8 +65,54 @@ def build_router(container: Container) -> APIRouter:
             "subscribed": True,
             "email": subscriber.email,
             "frequency": subscriber.frequency,
+            "subscriber_token": subscriber.unsubscribe_token,
             "message": f"You're signed up for the {subscriber.frequency} Signal Scout digest.",
         }
+
+    @router.post("/digest/test")
+    def send_test_digest(payload: TestDigestRequest):
+        email = payload.email.strip().lower()
+        subscriber = container.subscribers.get_by_token(payload.token)
+        if (
+            not EMAIL_RE.fullmatch(email)
+            or not subscriber
+            or not subscriber.active
+            or not hmac.compare_digest(subscriber.email, email)
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="That test-digest link is invalid or has expired. Please subscribe again.",
+            )
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        if container.digest_sends.sent_since(subscriber.id, cutoff):
+            raise HTTPException(
+                status_code=429,
+                detail="A test digest was already sent recently. Please try again after 24 hours.",
+            )
+
+        result = container.subscriber_digest.deliver(subscriber, dry_run=False)
+        if result["status"] == "sent":
+            return {
+                "sent": True,
+                "email": subscriber.email,
+                "candidate_count": result["candidate_count"],
+                "message": "Your test digest is on its way.",
+            }
+        if result["status"] == "preview":
+            raise HTTPException(
+                status_code=503,
+                detail="Email delivery isn't configured yet.",
+            )
+        if result["status"] == "empty":
+            raise HTTPException(
+                status_code=409,
+                detail="There are no new candidates available for your test digest yet.",
+            )
+        raise HTTPException(
+            status_code=502,
+            detail="We couldn't send your test digest right now. Please try again later.",
+        )
 
     @router.post("/analytics/page-view", status_code=202)
     def record_page_view(payload: PageViewEvent):

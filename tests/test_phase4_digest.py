@@ -83,6 +83,19 @@ class Phase4DigestTests(unittest.TestCase):
         self.container.db.close()
         self.temp_dir.cleanup()
 
+    def signup_for_test_digest(self, client: TestClient) -> dict:
+        response = client.post(
+            "/api/subscribers",
+            json={
+                "email": "investor@example.com",
+                "frequency": "daily",
+                "signal_interests": "open source",
+                "seed_accounts": "",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
     def test_subscribe_upserts_without_changing_token(self):
         first = self.container.subscribers.subscribe(
             "Investor@Example.com",
@@ -149,6 +162,86 @@ class Phase4DigestTests(unittest.TestCase):
         self.assertEqual(session.request["json"]["text"], "Plain text")
         self.assertEqual(session.request["timeout"], 15)
 
+    def test_test_digest_endpoint_sends_to_verified_subscriber(self):
+        app = FastAPI()
+        app.include_router(build_router(self.container))
+        client = TestClient(app)
+        signup = self.signup_for_test_digest(client)
+        sender = StubSender()
+        self.container.subscriber_digest.sender = sender
+
+        response = client.post(
+            "/api/digest/test",
+            json={
+                "email": signup["email"],
+                "token": signup["subscriber_token"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["sent"])
+        self.assertEqual(response.json()["candidate_count"], 1)
+        self.assertEqual(len(sender.messages), 1)
+        self.assertEqual(sender.messages[0][1], "investor@example.com")
+
+    def test_test_digest_endpoint_reports_unconfigured_sender(self):
+        app = FastAPI()
+        app.include_router(build_router(self.container))
+        client = TestClient(app)
+        signup = self.signup_for_test_digest(client)
+
+        response = client.post(
+            "/api/digest/test",
+            json={
+                "email": signup["email"],
+                "token": signup["subscriber_token"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "Email delivery isn't configured yet.")
+        subscriber = self.container.subscribers.get_by_email(signup["email"])
+        self.assertEqual(self.container.digest_sends.sent_person_ids(subscriber.id), set())
+
+    def test_test_digest_endpoint_rejects_invalid_token(self):
+        app = FastAPI()
+        app.include_router(build_router(self.container))
+        client = TestClient(app)
+        self.signup_for_test_digest(client)
+        sender = StubSender()
+        self.container.subscriber_digest.sender = sender
+
+        response = client.post(
+            "/api/digest/test",
+            json={
+                "email": "investor@example.com",
+                "token": "not-the-subscriber-token",
+            },
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(len(sender.messages), 0)
+
+    def test_test_digest_endpoint_rate_limits_for_24_hours(self):
+        app = FastAPI()
+        app.include_router(build_router(self.container))
+        client = TestClient(app)
+        signup = self.signup_for_test_digest(client)
+        sender = StubSender()
+        self.container.subscriber_digest.sender = sender
+        payload = {
+            "email": signup["email"],
+            "token": signup["subscriber_token"],
+        }
+
+        first = client.post("/api/digest/test", json=payload)
+        second = client.post("/api/digest/test", json=payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+        self.assertIn("after 24 hours", second.json()["detail"])
+        self.assertEqual(len(sender.messages), 1)
+
     def test_signup_feedback_unsubscribe_and_cron_auth(self):
         app = FastAPI()
         app.include_router(build_router(self.container))
@@ -164,6 +257,7 @@ class Phase4DigestTests(unittest.TestCase):
             },
         )
         self.assertEqual(signup.status_code, 200)
+        self.assertTrue(signup.json()["subscriber_token"])
         subscriber = self.container.subscribers.get_by_email("investor@example.com")
         self.assertEqual(len(subscriber.preferences["seed_accounts"]), 2)
 
