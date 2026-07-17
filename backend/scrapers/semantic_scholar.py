@@ -63,7 +63,14 @@ class SemanticScholarClient:
     def author_papers(self, author_id: str, limit: int = 10) -> list[dict]:
         data = self._get(
             f"/author/{author_id}/papers",
-            {"fields": "title,year,url,authors", "limit": limit},
+            {"fields": "paperId,title,year,url,authors", "limit": limit},
+        )
+        return (data or {}).get("data") or []
+
+    def paper_citations(self, paper_id: str, limit: int = 10) -> list[dict]:
+        data = self._get(
+            f"/paper/{paper_id}/citations",
+            {"fields": "title,year,authors", "limit": limit},
         )
         return (data or {}).get("data") or []
 
@@ -149,6 +156,66 @@ class SemanticScholarScraper:
                         source_name=person.name, target_name=coauthor,
                         edge_type="co_author", observed_date=date,
                         source="semantic_scholar", metadata={"paper": title[:120]},
+                    )
+                )
+        return signals, edges
+
+    def collect_citations(
+        self, person: Person, author: dict | None = None,
+        max_papers: int = 3, max_citations_per_paper: int = 5,
+    ) -> tuple[list[Signal], list[GraphEdge]]:
+        """paper_citation edges from authors who cite one of this person's papers,
+        plus a discovery-cohort-only `cited_paper` achievement signal.
+        Attention-tier: a citation is field-alignment/awareness, not a relationship.
+
+        The `cited_paper` signal is gated to `person.cohort == "discovery"` so it
+        never touches a founder's pre-breakout score — founder backtest calibration
+        (the reference scale every score is normalized against) stays byte-for-byte
+        unchanged, same convention as the discovery-only surface_bonus in
+        ScoringEngine.connection_signal. Fail-soft, same as collect()."""
+        if not self.has_real_name(person):
+            return [], []
+        author = author or self.find_author(person.name)
+        if not author or not author.get("authorId"):
+            return [], []
+
+        person_key = normalize_name(person.name)
+        signals: list[Signal] = []
+        edges: list[GraphEdge] = []
+        papers = [
+            paper for paper in self.client.author_papers(author["authorId"], limit=max_papers * 2)
+            if paper.get("paperId")
+        ][:max_papers]
+        for paper in papers:
+            title = (paper.get("title") or "").strip()
+            date = f"{paper['year']}-01-01" if paper.get("year") else datetime.now(timezone.utc).date().isoformat()
+            citations = self.client.paper_citations(paper["paperId"], limit=max_citations_per_paper * 2)
+            if not citations:
+                continue
+            for citation in citations:
+                citing_paper = citation.get("citingPaper") or {}
+                citers = [
+                    a["name"] for a in (citing_paper.get("authors") or [])
+                    if a.get("name") and normalize_name(a["name"]) != person_key
+                ]
+                for citer in citers[:max_citations_per_paper]:
+                    edges.append(
+                        GraphEdge(
+                            source_name=person.name, target_name=citer,
+                            edge_type="paper_citation", observed_date=date,
+                            source="semantic_scholar",
+                            metadata={"paper": title[:120], "citing_paper": (citing_paper.get("title") or "")[:120]},
+                        )
+                    )
+            if person.cohort == "discovery":
+                signals.append(
+                    Signal(
+                        person_name=person.name, signal_type="cited_paper",
+                        signal_category="research", signal_date=date,
+                        signal_strength=0.6, source="semantic_scholar",
+                        source_url=paper.get("url") or author.get("url") or "",
+                        summary=f'"{title[:80]}" cited by {len(citations)} other work{"s" if len(citations) != 1 else ""}',
+                        raw_data={"paper_id": paper["paperId"], "citation_count": len(citations)},
                     )
                 )
         return signals, edges

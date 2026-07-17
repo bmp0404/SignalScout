@@ -1,0 +1,26 @@
+{
+  "_note": "Small opt-in list of elite research labs for OpenAlexLabExpander lead-gen. `institution_id` is a bare OpenAlex institution id (precise filter, used when OpenAlex has resolved the lab as its own institution); `affiliation` is a free-text fallback (raw_affiliation_strings search) for labs OpenAlex hasn't resolved separately from their university. Only early-career authors (see OpenAlexScraper.is_early_career) are ever promoted from these.",
+  "targets": [
+    {
+      "school": "MIT",
+      "affiliation": "MIT CSAIL",
+      "institution_id": "I4405258931",
+      "area": "AI Research"
+    },
+    {
+      "school": "Stanford",
+      "affiliation": "Stanford Artificial Intelligence Laboratory",
+      "area": "AI Research"
+    },
+    {
+      "school": "UC Berkeley",
+      "affiliation": "Berkeley Artificial Intelligence Research",
+      "area": "AI Research"
+    },
+    {
+      "school": "CMU",
+      "affiliation": "Carnegie Mellon University Robotics Institute",
+      "area": "Robotics"
+    }
+  ]
+}

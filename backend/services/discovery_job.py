@@ -27,6 +27,7 @@ from backend.domain.signal import Signal
 from backend.enrichment.provider_enricher import build_provider_chain
 from backend.scrapers.devpost_scraper import DevpostScraper
 from backend.scrapers.github_scraper import GithubClient, GithubScraper
+from backend.scrapers.openalex import OpenAlexScraper
 from backend.scrapers.semantic_scholar import SemanticScholarScraper
 
 if TYPE_CHECKING:  # avoid a Container <-> DiscoveryJobManager import cycle
@@ -35,7 +36,7 @@ if TYPE_CHECKING:  # avoid a Container <-> DiscoveryJobManager import cycle
 logger = logging.getLogger(__name__)
 
 STAGES = ("scrape", "resolve", "enrich", "score")
-SOURCES = ("github", "pdl", "coresignal", "semantic_scholar", "devpost")
+SOURCES = ("github", "pdl", "coresignal", "semantic_scholar", "devpost", "openalex")
 
 
 class DiscoveryJobManager:
@@ -143,6 +144,19 @@ class DiscoveryJobManager:
         )
         return result.created
 
+    def _run_openalex_lab_lane(self, container: "Container") -> list:
+        """Opt-in curated-lab lead-gen (backend/discovery/openalex_labs.py). Off
+        unless `discovery_include_openalex` is set, same convention as fellowship
+        seeds. Returns the newly-created discovery people."""
+        if not self.settings.discovery_include_openalex:
+            return []
+        result = container.openalex_lab_expander.expand(on_progress=self._set_source_count)
+        logger.info(
+            "openalex lab lead-gen: created=%d considered=%d",
+            len(result.created), result.considered,
+        )
+        return result.created
+
     def _run_github_lane(
         self, container: "Container", token: str, on_progress
     ) -> "tuple[GithubScraper, list]":
@@ -185,8 +199,9 @@ class DiscoveryJobManager:
             if person.id not in fresh_ids
         ]
         scholar = SemanticScholarScraper()
+        openalex = container.openalex_scraper
         devpost = DevpostScraper()
-        scholar_checked = devpost_checked = 0
+        scholar_checked = openalex_checked = devpost_checked = 0
         for person in pool:
             if scholar_checked < 8 and scholar.has_real_name(person):
                 if not any(
@@ -194,7 +209,18 @@ class DiscoveryJobManager:
                     for signal in container.signals.for_person(person.id)
                 ):
                     scholar_checked += 1
-                    self._save_collected(container, *scholar.collect(person))
+                    author = scholar.find_author(person.name)
+                    self._save_collected(container, *scholar.collect(person, author=author))
+                    self._save_collected(
+                        container, *scholar.collect_citations(person, author=author)
+                    )
+            if openalex_checked < 8 and openalex.has_real_name(person):
+                if not any(
+                    signal.source == "openalex"
+                    for signal in container.signals.for_person(person.id)
+                ):
+                    openalex_checked += 1
+                    self._save_collected(container, *openalex.collect(person))
             if devpost_checked < 8 and person.github_username:
                 if not any(
                     signal.source == "devpost"
@@ -204,7 +230,7 @@ class DiscoveryJobManager:
                     self._save_collected(
                         container, *devpost.collect(person, person.github_username)
                     )
-            if scholar_checked >= 8 and devpost_checked >= 8:
+            if scholar_checked >= 8 and openalex_checked >= 8 and devpost_checked >= 8:
                 break
 
         result = CollaborationExpander(
@@ -215,6 +241,7 @@ class DiscoveryJobManager:
             devpost,
             scholar,
             container.provider_enricher,
+            openalex=openalex,
         ).expand(max_promotions=self.settings.collaboration_promotion_cap)
         for source, count in result.source_counts.items():
             self._set_source_count(source, count)
@@ -235,6 +262,10 @@ class DiscoveryJobManager:
             # GitHub account required. Runs first so it is the primary source.
             provider_people = self._run_provider_lane(container)
 
+            # LANE 1b (LEAD, opt-in): curated-lab lead-gen via OpenAlex —
+            # early-career authors at target labs, also no GitHub account required.
+            openalex_lab_people = self._run_openalex_lab_lane(container)
+
             # LANE 2: GitHub expansion — every find is cross-corroborated by
             # pushing it through the provider enrichment chain below.
             github_people: list = []
@@ -244,9 +275,9 @@ class DiscoveryJobManager:
             self._set_source_count("github", len(github_people))
 
             collaboration_people = self._run_collaboration_lane(
-                container, scraper, provider_people + github_people
+                container, scraper, provider_people + openalex_lab_people + github_people
             )
-            discovered = provider_people + github_people + collaboration_people
+            discovered = provider_people + openalex_lab_people + github_people + collaboration_people
             self._set_stage("scrape", status="done")
             self._set_stage("resolve", status="done", count=len(discovered))
 

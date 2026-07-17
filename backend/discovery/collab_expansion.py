@@ -14,11 +14,12 @@ from backend.domain.signal import Signal
 from backend.enrichment.provider_enricher import ProviderEnricher
 from backend.scrapers.devpost_scraper import DevpostScraper
 from backend.scrapers.github_scraper import GithubScraper, parse_grad_year
+from backend.scrapers.openalex import OpenAlexScraper
 from backend.scrapers.semantic_scholar import SemanticScholarScraper
 
 logger = logging.getLogger(__name__)
 
-COLLAB_EDGE_TYPES = ("hackathon_teammate", "co_author")
+COLLAB_EDGE_TYPES = ("hackathon_teammate", "co_author", "paper_citation")
 
 
 @dataclass
@@ -26,7 +27,7 @@ class CollaborationExpansionResult:
     promoted: list[Person] = field(default_factory=list)
     considered: int = 0
     source_counts: dict[str, int] = field(
-        default_factory=lambda: {"devpost": 0, "semantic_scholar": 0}
+        default_factory=lambda: {"devpost": 0, "semantic_scholar": 0, "openalex": 0}
     )
 
 
@@ -48,6 +49,7 @@ class CollaborationExpander:
         devpost: DevpostScraper,
         scholar: SemanticScholarScraper,
         provider_enricher: ProviderEnricher | None = None,
+        openalex: OpenAlexScraper | None = None,
     ):
         self.persons = persons
         self.signals = signals
@@ -56,6 +58,7 @@ class CollaborationExpander:
         self.devpost = devpost
         self.scholar = scholar
         self.provider_enricher = provider_enricher
+        self.openalex = openalex
 
     def expand(self, max_promotions: int = 15, follower_cap: int = 2000) -> CollaborationExpansionResult:
         result = CollaborationExpansionResult()
@@ -76,8 +79,11 @@ class CollaborationExpander:
             new_signals: list[Signal] = []
             if edge.edge_type == "hackathon_teammate":
                 person, new_signals = self._promote_devpost(edge, follower_cap)
-            elif edge.edge_type == "co_author":
-                person, new_signals = self._promote_scholar(edge)
+            elif edge.edge_type in ("co_author", "paper_citation"):
+                if edge.source == "openalex" and self.openalex is not None:
+                    person, new_signals = self._promote_openalex(edge)
+                else:
+                    person, new_signals = self._promote_scholar(edge)
             if person is None:
                 continue
             if self.persons.get(person.id):
@@ -180,6 +186,22 @@ class CollaborationExpander:
                 "semantic_scholar_url": author.get("url"),
             }
         )
+        return candidate, dated
+
+    def _promote_openalex(self, edge: GraphEdge) -> tuple[Person | None, list[Signal]]:
+        author = self.openalex.find_author(edge.target_name)
+        if not author or not author.get("id"):
+            return None, []
+        candidate = Person(
+            name=author.get("display_name") or edge.target_name,
+            cohort="discovery",
+            discovery_origin="openalex",
+        )
+        signals, _ = self.openalex.collect(candidate, author=author)
+        dated = [signal for signal in signals if signal.raw_data.get("year")]
+        if not dated:
+            return None, []
+        candidate.contact_info.update({"openalex_author_id": author["id"]})
         return candidate, dated
 
     def _attach(self, group: list[GraphEdge], person: Person) -> None:

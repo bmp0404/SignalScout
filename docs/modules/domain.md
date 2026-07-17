@@ -24,8 +24,8 @@ Defines the models for the weekly "people you should know" investor email (spec 
 ## backend/domain/graph_edge.py
 Defines the typed connection edge between two people used for the social-graph/connections features, plus the edge-type vocabulary and trust weighting used in scoring.
 
-- `EDGE_TYPES` — tuple constant of the allowed edge type strings (e.g. `github_follows`, `mutual_star`, `starred_repo`, `forked_repo`, `issue_pr_interaction`, `co_author`, `co_contributor`, `org_mate`, `hackathon_teammate`, `fellowship_cohort`, `twitter_follows`).
-- `EDGE_QUALITY` — dict constant mapping each edge type to a relative trust weight (0.0-1.0) used when scoring connections, e.g. `co_author` = 1.0 (strongest) down to `twitter_follows` = 0.4 (weakest).
+- `EDGE_TYPES` — tuple constant of the allowed edge type strings (e.g. `github_follows`, `mutual_star`, `starred_repo`, `forked_repo`, `issue_pr_interaction`, `co_author`, `co_contributor`, `org_mate`, `hackathon_teammate`, `fellowship_cohort`, `twitter_follows`, `paper_citation`).
+- `EDGE_QUALITY` — dict constant mapping each edge type to a relative trust weight (0.0-1.0) used when scoring connections, e.g. `co_author` = 1.0 (strongest) down to `twitter_follows` = 0.4 (weakest); `paper_citation` = 0.45, same attention tier as `starred_repo` (one-way awareness, not a proven relationship).
 - `GraphEdge` — dataclass representing a directed edge between two people; fields: `source_name`, `target_name`, `edge_type`, `observed_date` (ISO date, backtest only counts pre-breakout edges), `source` (data source name), auto-generated `id` (uuid4), optional `source_person_id`/`target_person_id`, and a `metadata` dict.
   - `GraphEdge.__post_init__()` — validates that `edge_type` is one of `EDGE_TYPES`, raising `ValueError` otherwise.
 

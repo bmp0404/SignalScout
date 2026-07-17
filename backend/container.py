@@ -21,6 +21,7 @@ from backend.digest.generator import DigestGenerator
 from backend.digest.sender import ResendSender
 from backend.discovery.concentrations import ConcentrationDetector
 from backend.discovery.entity_resolution import EntityResolver
+from backend.discovery.openalex_labs import OpenAlexLabExpander
 from backend.discovery.provider_expansion import ProviderExpander
 from backend.enrichment.budgets import ProviderBudget
 from backend.enrichment.contacts import ContactEnricher
@@ -28,6 +29,7 @@ from backend.enrichment.locations import LocationResolver
 from backend.enrichment.provider_enricher import ProviderEnricher, build_provider_chain
 from backend.scoring.backtest import BacktestRunner
 from backend.scoring.engine import ScoringEngine
+from backend.scrapers.openalex import OpenAlexClient, OpenAlexScraper
 from backend.security.email_actions import EmailActionSigner
 from backend.services.candidate_service import CandidateService
 from backend.services.candidate_review import CandidateReviewService
@@ -69,6 +71,12 @@ class Container:
             self.provider_chain, self.persons, self.provider_identities,
             self.provider_enricher, self.provider_budget,
             self.settings.provider_discovery_filters_file,
+        )
+        self.openalex_client = OpenAlexClient(mailto=self.settings.openalex_mailto)
+        self.openalex_scraper = OpenAlexScraper(self.openalex_client)
+        self.openalex_lab_expander = OpenAlexLabExpander(
+            self.persons, self.signals, self.edges,
+            self.openalex_client, self.settings.openalex_targets_file,
         )
         self.candidate_service = CandidateService(
             self.persons,

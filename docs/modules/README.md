@@ -11,9 +11,9 @@ Backend pipeline order: `domain` → `db` → `scrapers` → `scoring` / `discov
 | [core.md](core.md) | `backend/main.py`, `config.py`, `container.py` | Entry point + composition root: settings, DI wiring, FastAPI app construction. |
 | [domain.md](domain.md) | `backend/domain/*` | Plain dataclasses (Person, Signal, GraphEdge, Digest, CandidateReview, Concentration, Subscriber) — the shared vocabulary every other layer imports. |
 | [db.md](db.md) | `backend/db/*`, `db/repositories/*` | Persistence layer: `Database` connection provider (SQLite or Postgres via `DATABASE_URL`) + table-scoped repository classes. |
-| [scrapers.md](scrapers.md) | `backend/scrapers/*` | Pulls raw evidence from GitHub, Devpost, Semantic Scholar, and seeded fixtures into `Signal`/`GraphEdge` records; fails soft. |
+| [scrapers.md](scrapers.md) | `backend/scrapers/*` | Pulls raw evidence from GitHub, Devpost, Semantic Scholar, OpenAlex, and seeded fixtures into `Signal`/`GraphEdge` records; fails soft. |
 | [scoring.md](scoring.md) | `backend/scoring/*` | Turns collected signals into a normalized 0-100 score (weighted sum × diversity × recency × age); backtests the formula against known founders/controls. |
-| [discovery.md](discovery.md) | `backend/discovery/*` | Expands the candidate pool via graph/collaborator relationships, provider-based (PDL/Coresignal) expansion, fellowship seeds, entity resolution, and concentration detection. |
+| [discovery.md](discovery.md) | `backend/discovery/*` | Expands the candidate pool via graph/collaborator relationships, provider-based (PDL/Coresignal) expansion, curated-lab lead-gen (OpenAlex), fellowship seeds, entity resolution, and concentration detection. |
 | [enrichment.md](enrichment.md) | `backend/enrichment/*`, `enrichment/providers/*` | Adds location/contact/identity data via pluggable licensed providers (PDL, Coresignal) with caching and per-provider budgets; never scrapes LinkedIn. |
 | [services.md](services.md) | `backend/services/*` | Application-level orchestration classes that the API layer calls — glue between repositories/scoring/discovery/enrichment/digest. |
 | [digest.md](digest.md) | `backend/digest/*` | Builds and sends the investor-facing digest email via Resend (or no-op preview sender). |

@@ -23,6 +23,7 @@ class Settings:
     fellowship_alumni_file: Path = DATA_DIR / "fellowship_alumni.json"
     school_locations_file: Path = DATA_DIR / "school_locations.json"
     provider_discovery_filters_file: Path = DATA_DIR / "provider_discovery_filters.json"
+    openalex_targets_file: Path = DATA_DIR / "openalex_targets.json"
 
     # Scoring / backtest knobs (tuned against the backtest, see backend/scoring/weights.py)
     flag_threshold: float = 40.0  # normalized 0-100 score at which a candidate is "flagged"
@@ -40,6 +41,15 @@ class Settings:
             "DISCOVERY_INCLUDE_FELLOWSHIP_SEEDS", ""
         ).lower() in ("1", "true", "yes")
     )
+    # Curated-lab lead-gen (backend/discovery/openalex_labs.py). Opt-in like the
+    # fellowship seeds — off by default so a run doesn't grow scope unexpectedly.
+    discovery_include_openalex: bool = field(
+        default_factory=lambda: os.environ.get(
+            "DISCOVERY_INCLUDE_OPENALEX", ""
+        ).lower() in ("1", "true", "yes")
+    )
+    # OpenAlex "polite pool" contact param — priority routing/higher limits, no key required.
+    openalex_mailto: str = field(default_factory=lambda: os.environ.get("OPENALEX_MAILTO", ""))
 
     # Licensed enrichment. Missing key -> provider absent from chain -> that lane no-ops.
     # The chain is PDL-first, Coresignal-fallback; ENRICHMENT_PROVIDER is retained only as a

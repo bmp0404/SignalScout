@@ -15,6 +15,7 @@ EDGE_TYPES = (
     "hackathon_teammate",
     "fellowship_cohort",
     "twitter_follows",
+    "paper_citation",
 )
 
 # Relative trust of an edge type when scoring connections.
@@ -30,6 +31,8 @@ EDGE_QUALITY: dict[str, float] = {
     "github_follows": 0.5,
     # A one-way star is attention, not a proven reciprocal relationship.
     "starred_repo": 0.45,
+    # A citation is field-alignment/awareness, same tier as a star.
+    "paper_citation": 0.45,
     "twitter_follows": 0.4,
 }
 

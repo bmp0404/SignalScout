@@ -96,11 +96,21 @@ class FakeScholarClient:
                     "url": "https://www.semanticscholar.org/author/author-1",
                 }
             ]
+        if name == "Citing Author":
+            return [
+                {
+                    "authorId": "author-2",
+                    "name": "Citing Author",
+                    "paperCount": 1,
+                    "url": "https://www.semanticscholar.org/author/author-2",
+                }
+            ]
         return []
 
     def author_papers(self, author_id, limit=10):
         return [
             {
+                "paperId": "paper-1",
                 "title": "A Verified Paper",
                 "year": 2024,
                 "url": "https://www.semanticscholar.org/paper/paper-1",
@@ -108,6 +118,17 @@ class FakeScholarClient:
                     {"name": "Research Candidate"},
                     {"name": "Other Author"},
                 ],
+            }
+        ]
+
+    def paper_citations(self, paper_id, limit=10):
+        return [
+            {
+                "citingPaper": {
+                    "title": "A Later Paper",
+                    "year": 2025,
+                    "authors": [{"name": "Citing Author"}],
+                }
             }
         ]
 
@@ -238,6 +259,52 @@ class GraphExpansionDeepeningTests(unittest.TestCase):
         ]
         self.assertTrue(all(edge.metadata["repeat"] == 2 for edge in devpost_edges))
         self.assertTrue(all(edge.target_person_id for edge in self.container.edges.all()))
+
+    def test_citation_promotes_citing_author(self):
+        seed = Person(name="Research Candidate", cohort="founder")
+        self.container.persons.save(seed)
+        scholar = SemanticScholarScraper(FakeScholarClient())
+
+        # Founder cohort: no cited_paper signal, so founder pre-breakout scores
+        # (and the backtest reference scale derived from them) are untouched.
+        signals, edges = scholar.collect_citations(seed)
+        self.assertEqual(signals, [])
+        self.assertEqual(len(edges), 1)
+        citation_edge = edges[0]
+        self.assertEqual(citation_edge.edge_type, "paper_citation")
+        self.assertEqual(citation_edge.source_name, seed.name)
+        self.assertEqual(citation_edge.target_name, "Citing Author")
+        self.assertEqual(citation_edge.source, "semantic_scholar")
+        citation_edge.source_person_id = seed.id
+        self.container.edges.save_many(edges)
+
+        result = CollaborationExpander(
+            self.container.persons,
+            self.container.signals,
+            self.container.edges,
+            GithubScraper(FakeGithubClient(), []),
+            FakeDevpost(),
+            scholar,
+        ).expand(max_promotions=15)
+
+        self.assertEqual(len(result.promoted), 1)
+        citer = self.container.persons.find_by_name("Citing Author")
+        self.assertIsNotNone(citer)
+        saved_edge = self.container.edges.all()[0]
+        self.assertEqual(saved_edge.target_person_id, citer.id)
+
+    def test_cited_paper_signal_only_for_discovery_cohort(self):
+        scholar = SemanticScholarScraper(FakeScholarClient())
+        founder = Person(name="Research Candidate", cohort="founder")
+        discovery = Person(name="Research Candidate", cohort="discovery")
+
+        founder_signals, _ = scholar.collect_citations(founder)
+        discovery_signals, _ = scholar.collect_citations(discovery)
+
+        self.assertEqual(founder_signals, [])
+        self.assertEqual(len(discovery_signals), 1)
+        self.assertEqual(discovery_signals[0].signal_type, "cited_paper")
+        self.assertEqual(discovery_signals[0].raw_data["citation_count"], 1)
 
     def test_discovery_scoring_compounds_distinct_surfaces_but_founders_do_not(self):
         seed = Person(name="Seed", cohort="founder")

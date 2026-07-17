@@ -1,6 +1,6 @@
 # Scrapers
 
-The scrapers module collects raw evidence from external sources (GitHub, Devpost, Semantic Scholar) and curated fixture files, converting each into the shared `Signal` (and sometimes `GraphEdge`) domain records that the scoring module consumes. Every scraper is designed to fail soft — partial or total source failures degrade gracefully to an empty result rather than raising.
+The scrapers module collects raw evidence from external sources (GitHub, Devpost, Semantic Scholar, OpenAlex) and curated fixture files, converting each into the shared `Signal` (and sometimes `GraphEdge`) domain records that the scoring module consumes. Every scraper is designed to fail soft — partial or total source failures degrade gracefully to an empty result rather than raising.
 
 ## backend/scrapers/__init__.py
 Empty package marker file; no code.
@@ -57,15 +57,34 @@ Loads curated signal fixtures from `data/seed_signals/*.json` for every non-GitH
   - `SeededScraper.scrape() -> list[Signal]` — returns `[]` if the fixture file doesn't exist; otherwise parses the JSON file's `signals` array into `Signal` records, defaulting each record's `source`/`signal_category` to the fixture's top-level `source`/`category` (or the file stem) when not specified per-row.
 
 ## backend/scrapers/semantic_scholar.py
-Scrapes the free, unauthenticated Semantic Scholar Graph API (author search -> papers -> co-authors) to emit co-authored-paper signals and co-author graph edges for discovery-cohort people with real (full) names. No API key/env var required; the client backs off and retries on HTTP 429 rate-limiting and fails soft.
+Scrapes the free, unauthenticated Semantic Scholar Graph API (author search -> papers -> co-authors, plus per-paper citations -> citing authors) to emit co-authored-paper signals, co-author graph edges, and attention-tier paper-citation graph edges for discovery-cohort people with real (full) names. No API key/env var required; the client backs off and retries on HTTP 429 rate-limiting and fails soft.
 
 - `SemanticScholarClient` — thin wrapper around the Semantic Scholar Graph API with retry/backoff on rate limiting; all failures (including persistent 429s) return `None`/`[]`.
   - `SemanticScholarClient.__init__(max_retries=3, backoff_seconds=2.0)` — sets up a `requests.Session` with a descriptive User-Agent and configures retry count/backoff.
   - `SemanticScholarClient._get(path, params=None)` — issues a GET request, retrying with linearly increasing backoff on HTTP 429 up to `max_retries` times, returning parsed JSON or `None` on any other failure or exhausted retries.
   - `SemanticScholarClient.search_author(name) -> list[dict]` — searches for authors by name, returning candidate author records with name/paperCount/hIndex/url.
-  - `SemanticScholarClient.author_papers(author_id, limit=10) -> list[dict]` — fetches an author's papers (title, year, url, authors) up to `limit`.
-- `SemanticScholarScraper` — per-person collector that resolves a person to a Semantic Scholar author and emits co-authorship signals/edges; capped so one person costs at most 2 API calls.
+  - `SemanticScholarClient.author_papers(author_id, limit=10) -> list[dict]` — fetches an author's papers (paperId, title, year, url, authors) up to `limit`.
+  - `SemanticScholarClient.paper_citations(paper_id, limit=10) -> list[dict]` — fetches papers that cite the given paper (each row wraps a `citingPaper` dict with title/year/authors), up to `limit`.
+- `SemanticScholarScraper` — per-person collector that resolves a person to a Semantic Scholar author and emits co-authorship signals/edges plus citation edges; capped so one person costs at most 2 API calls for co-authorship (more for citation walking, each fail-soft).
   - `SemanticScholarScraper.__init__(client=None, max_papers=3, max_coauthors_per_paper=5)` — stores (or default-constructs) a `SemanticScholarClient` and caps on papers/co-authors processed per person.
   - `SemanticScholarScraper.has_real_name(person) -> bool` (static) — returns whether a person has a plausible full name (contains a space, and isn't identical to their GitHub login) suitable for author search, avoiding false matches from bare usernames.
   - `SemanticScholarScraper.find_author(name) -> dict | None` — searches for an author by name and returns the single normalized-name-exact match whose paper count is between 1 and `MAX_AUTHOR_PAPERS` (50), treating any ambiguous (multiple matches) or overly prolific (established academic) result as no match.
   - `SemanticScholarScraper.collect(person, author=None) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` co-authored papers (skipping solo papers with no co-authors) emits a `co_authored_paper` signal (strength 0.6) per paper and a `co_author` graph edge to up to `max_coauthors_per_paper` co-authors per paper.
+  - `SemanticScholarScraper.collect_citations(person, author=None, max_papers=3, max_citations_per_paper=5) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` of their papers that have a `paperId`, fetches citing papers and emits a `paper_citation` graph edge (person -> citing author) per citing author, up to `max_citations_per_paper` per paper, plus a `cited_paper` signal (strength 0.6) per cited paper — but only when `person.cohort == "discovery"`, so a founder's pre-breakout score (and therefore the backtest reference scale) is never affected by this signal.
+
+## backend/scrapers/openalex.py
+Scrapes the free, unauthenticated OpenAlex API (author search -> works -> co-authors) to emit co-authored-paper signals and `co_author` graph edges for discovery-cohort people with real names — same shape as `semantic_scholar.py`, used both for co-author expansion of known people and by `backend/discovery/openalex_labs.py`'s lab-affiliation lead-gen. No API key required; a `mailto` param is honored for OpenAlex's polite pool (priority routing/higher limits). The client backs off and retries on HTTP 429 and fails soft.
+
+- `OpenAlexClient` — thin wrapper around the OpenAlex API with retry/backoff on rate limiting; all failures return `None`/`[]`.
+  - `OpenAlexClient.__init__(mailto="", max_retries=3, backoff_seconds=2.0)` — sets up a `requests.Session`, stores the polite-pool `mailto` (attached to every request when set).
+  - `OpenAlexClient._get(path, params=None)` — issues a GET request, retrying with linearly increasing backoff on HTTP 429 up to `max_retries` times, returning parsed JSON or `None` on any other failure or exhausted retries.
+  - `OpenAlexClient.search_author(name) -> list[dict]` — searches for authors by name, returning candidate records with id/display_name/works_count/cited_by_count.
+  - `OpenAlexClient.author(author_id) -> dict | None` — fetches one author's full record (works_count, cited_by_count, summary_stats, last_known_institutions).
+  - `OpenAlexClient.author_works(author_id, limit=10) -> list[dict]` — fetches an author's works (id/title/publication_year/publication_date/authorships) up to `limit`.
+  - `OpenAlexClient.works_by_affiliation(affiliation, from_date=None, limit=25, institution_id=None) -> list[dict]` — fetches recent works matching a lab: filters by the precise `institutions.id` when OpenAlex has resolved the lab as its own institution (e.g. MIT CSAIL), otherwise falls back to a free-text `raw_affiliation_strings.search` match (e.g. Stanford SAIL/Berkeley BAIR, which OpenAlex hasn't resolved separately from their university) — no HTML scraping of lab pages either way.
+- `MAX_AUTHOR_WORKS = 30`, `MAX_AUTHOR_CITED_BY = 500` — the early-career gate thresholds: above either, an author reads as an established researcher, not a pre-breakout person.
+- `OpenAlexScraper` — per-person collector that resolves a person to an OpenAlex author and emits co-authorship signals/edges; capped so one person costs at most 2 API calls.
+  - `OpenAlexScraper.has_real_name` — the same static check as `SemanticScholarScraper.has_real_name` (imported, not duplicated).
+  - `OpenAlexScraper.is_early_career(author) -> bool` (static) — `True` when `1 <= works_count <= MAX_AUTHOR_WORKS` and `cited_by_count <= MAX_AUTHOR_CITED_BY`.
+  - `OpenAlexScraper.find_author(name) -> dict | None` — searches for an author by name and returns the single normalized-name-exact, early-career match; ambiguous or prolific results are treated as no match.
+  - `OpenAlexScraper.collect(person, author=None) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` co-authored works (skipping solo works with no co-authors) emits a `co_authored_paper` signal (strength 0.6, `source="openalex"`) per work and a `co_author` graph edge (`source="openalex"`) to up to `max_coauthors_per_paper` co-authors per work.
