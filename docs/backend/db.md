@@ -66,6 +66,21 @@ Manages the `digests` table, which stores generated email digests (subject, entr
   - `DigestRepository.latest()` — returns the most recently generated digest, or `None`.
   - `DigestRepository._to_model(row) -> Digest` — converts a DB row into a `Digest`, decoding JSON entries into `DigestEntry` instances.
 
+## backend/db/repositories/discovery_recipes.py
+Self-provisioning (`CREATE TABLE IF NOT EXISTS`) repository for `DiscoveryRecipe` rows (see `domain.md`), backing the recipe layer on top of `ProviderExpander` (see `discovery.md`). Never overwrites an existing recipe row on seed, so operator edits (approval, status, last_run) survive container restarts.
+
+- `TABLE_SQL` — module-level DDL for the `discovery_recipes` table.
+- `DiscoveryRecipeRepository` — CRUD + idempotent-seed access to `discovery_recipes`.
+  - `DiscoveryRecipeRepository.__init__(db)` — creates the table if missing.
+  - `DiscoveryRecipeRepository.seed(recipes)` — inserts each recipe in the list only if a row with that `id` doesn't already exist; used by `container.py` to load `backend/discovery/recipe_seeds.py`'s `INITIAL_RECIPES` on every startup without clobbering operator changes.
+  - `DiscoveryRecipeRepository.get(recipe_id) -> DiscoveryRecipe | None` — fetches one recipe by id.
+  - `DiscoveryRecipeRepository.all() -> list[DiscoveryRecipe]` — lists all recipes ordered by name.
+  - `DiscoveryRecipeRepository.upsert(recipe)` — inserts or fully replaces (`INSERT OR REPLACE`) a recipe row.
+  - `DiscoveryRecipeRepository.set_last_run(recipe_id, when)` — updates just the `last_run` column.
+  - `DiscoveryRecipeRepository.set_approval_state(recipe_id, approval_state)` — updates just the `approval_state` column.
+  - `DiscoveryRecipeRepository.set_status(recipe_id, status)` — updates just the `status` column.
+  - `DiscoveryRecipeRepository._to_model(row) -> DiscoveryRecipe` — converts a DB row into a `DiscoveryRecipe`, decoding the JSON `filters_json`/`relative_filters_json` columns.
+
 ## backend/db/repositories/enrichment.py
 Two self-provisioning (`CREATE TABLE IF NOT EXISTS`) repositories backing the licensed-enrichment guardrails: `enrichment_cache` (cached provider payloads per person) and `enrichment_usage` (per-provider/lane/day request counters), created inline because the live database predates them and is never reset.
 
@@ -104,7 +119,7 @@ Manages the `page_views` table, a privacy-minimal log of page path + referrer + 
 Manages the `persons` table (the core entity: candidate/tracked individuals with contact info, cohort, discovery/enrichment metadata, and score), mapping to/from the `Person` domain dataclass; also self-migrates the table by adding newer columns and backfilling discovery metadata on legacy rows.
 
 - `PersonRepository` — CRUD access to `persons`, plus schema/data migration helpers.
-  - `PersonRepository.EXTRA_COLUMNS` — dict of columns (`discovery_origin`, `evidence_tier`, `review_required`, `enrichment_status`, `enrichment_provider`, `enrichment_updated_at`) added on top of the base schema if missing.
+  - `PersonRepository.EXTRA_COLUMNS` — dict of columns (`discovery_origin`, `evidence_tier`, `review_required`, `enrichment_status`, `enrichment_provider`, `enrichment_updated_at`, `discovery_source`) added on top of the base schema if missing.
   - `PersonRepository.__init__(db)` — ensures the extra columns exist, then backfills legacy discovery metadata.
   - `PersonRepository.save(person)` — upserts (`INSERT OR REPLACE`) a full person row.
   - `PersonRepository.save_many(persons)` — saves a list of persons (one `save` call each, no aggregate commit).
@@ -113,16 +128,17 @@ Manages the `persons` table (the core entity: candidate/tracked individuals with
   - `PersonRepository.find_by_github(username)` — case-insensitive lookup by GitHub username.
   - `PersonRepository.all(cohort=None)` — lists all persons, optionally filtered by cohort.
   - `PersonRepository.update_score(person_id, score)` — updates just the `score` column for a person.
+  - `PersonRepository.delete(person_id)` — deletes a person row outright. Used by `backend/scrapers/resolve.py`'s `LeadResolver` to roll back the tentative row it saves before calling `ProviderEnricher.run()` (required because `run()` derives `Signal` rows that FK-reference `persons`, so the row must exist first) when PDL Identify doesn't confirm a match.
   - `PersonRepository._to_model(row) -> Person` — converts a DB row into a `Person`, decoding JSON `aliases`/`contact_info` columns.
   - `PersonRepository._ensure_columns()` — adds any of `EXTRA_COLUMNS` missing from the live `persons` table via `ALTER TABLE ADD COLUMN`.
   - `PersonRepository._column_names() -> set[str]` — returns the current set of column names on `persons`, via `information_schema.columns` (Postgres) or `PRAGMA table_info` (SQLite).
-  - `PersonRepository._derive_legacy_discovery_metadata()` — for pre-migration `cohort='discovery'` rows missing `discovery_origin`/`evidence_tier`/`enrichment_status`, infers and backfills those fields from `contact_info`, presence of a `provider_identities` row, and related `signals` rows (e.g. `job_change` or `linkedin_created_recently` signals imply a "verified" evidence tier).
+  - `PersonRepository._derive_legacy_discovery_metadata()` — for pre-migration `cohort='discovery'` rows missing `discovery_origin`/`evidence_tier`/`enrichment_status`/`discovery_source`, infers and backfills those fields from `contact_info`, presence of a `provider_identities` row, and related `signals` rows (e.g. `job_change` or `linkedin_created_recently` signals imply a "verified" evidence tier); `discovery_source` is backfilled as `f"{provider}_discovery"` when `contact_info["discovered_via"]` is `"pdl"`/`"coresignal"` and the row predates the `discovery_source` column.
 
 ## backend/db/repositories/provider_identities.py
-Two self-provisioning repositories used by provider-search discovery: `ProviderIdentityRepository` dedupes people found via paid data providers against existing `persons` (backed by `provider_identities`), and tracks pagination/outcome checkpoints per provider+filter (backed by `provider_search_checkpoints`).
+Two self-provisioning repositories used by provider-search discovery: `ProviderIdentityRepository` dedupes people found via paid data providers against existing `persons` (backed by `provider_identities`), and tracks pagination/outcome checkpoints per provider+filter (backed by `provider_search_checkpoints`) — this checkpoint table doubles as the recipe run-log the recipe API surfaces (see `services.md`'s `discovery_recipe_service.py`).
 
 - `TABLE_SQL` — module-level DDL for `provider_identities` (+ indexes) and `provider_search_checkpoints`.
-- `ProviderSearchCheckpoint` — dataclass capturing a provider search's pagination cursor, page/request/record counters, per-outcome counters (verified/review/merged/duplicate/rejected/error), rejection-reason histogram, and last outcome string.
+- `ProviderSearchCheckpoint` — dataclass capturing a provider search's pagination cursor, page/request/record counters, per-outcome counters (verified/review/merged/duplicate/rejected/error), `search_credit_units`/`collect_credit_units` (Coresignal's separately-billed Search vs Collect API calls — always 0 for PDL, which doesn't distinguish them), rejection-reason histogram, and last outcome string.
 - `canonical_linkedin(url) -> str | None` — normalizes a LinkedIn URL into a stable lower-cased dedupe key (strips scheme, query, fragment, `www.`, trailing slash).
 - `ProviderIdentityRepository` — identity dedupe + checkpoint persistence.
   - `ProviderIdentityRepository.__init__(db)` — creates the two tables/indexes and ensures the checkpoint table's newer columns exist.
@@ -130,8 +146,8 @@ Two self-provisioning repositories used by provider-search discovery: `ProviderI
   - `ProviderIdentityRepository.find_person_by_linkedin(url) -> str | None` — looks up an existing `person_id` by canonicalized LinkedIn URL.
   - `ProviderIdentityRepository.link(provider, provider_person_id, person_id, linkedin_url, observed_at)` — upserts (`INSERT OR REPLACE`) a provider-identity-to-person mapping.
   - `ProviderIdentityRepository.checkpoint(provider, filter_identity) -> ProviderSearchCheckpoint | None` — loads a checkpoint row for a given provider+filter, or `None` if absent.
-  - `ProviderIdentityRepository.record_search_page(checkpoint, *, next_cursor, exhausted, api_requests, returned_records, credit_units, outcomes, rejection_reasons, last_outcome, updated_at, advance=True)` — builds an updated `ProviderSearchCheckpoint` by accumulating the new page's counters onto the existing checkpoint, persists it (`INSERT OR REPLACE`), and returns it.
-  - `ProviderIdentityRepository._ensure_checkpoint_columns()` — adds the `error_count` column to `provider_search_checkpoints` if missing, tolerating a "duplicate column" error on SQLite.
+  - `ProviderIdentityRepository.record_search_page(checkpoint, *, next_cursor, exhausted, api_requests, returned_records, credit_units, outcomes, rejection_reasons, last_outcome, updated_at, advance=True, search_credit_units=0, collect_credit_units=0)` — builds an updated `ProviderSearchCheckpoint` by accumulating the new page's counters (including the Search/Collect credit split) onto the existing checkpoint, persists it (`INSERT OR REPLACE`), and returns it.
+  - `ProviderIdentityRepository._ensure_checkpoint_columns()` — adds the `error_count`, `search_credit_units`, and `collect_credit_units` columns to `provider_search_checkpoints` if missing, tolerating a "duplicate column" error on SQLite.
   - `ProviderIdentityRepository.ensure_checkpoint(provider, filter_identity, filters, updated_at) -> ProviderSearchCheckpoint` — returns the existing checkpoint or a fresh in-memory (not yet persisted) default one.
   - `ProviderIdentityRepository.checkpoints() -> list[ProviderSearchCheckpoint]` — lists all checkpoints across all providers/filters, ordered by provider then filter identity.
 

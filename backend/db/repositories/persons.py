@@ -12,6 +12,7 @@ class PersonRepository(BaseRepository):
         "enrichment_status": "TEXT",
         "enrichment_provider": "TEXT",
         "enrichment_updated_at": "TEXT",
+        "discovery_source": "TEXT",
     }
 
     def __init__(self, db):
@@ -26,9 +27,10 @@ class PersonRepository(BaseRepository):
                 personal_site, contact_info, school, graduation_year, origin_location,
                 current_location, region, fellowship, breakout_date, area, thesis, score,
                 needs_review, discovery_origin, evidence_tier, review_required,
-                enrichment_status, enrichment_provider, enrichment_updated_at, notes)
+                enrichment_status, enrichment_provider, enrichment_updated_at, notes,
+                discovery_source)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 person.id, person.name, self.dumps(person.aliases), person.cohort,
                 person.github_username, person.twitter_handle, person.linkedin_url, person.email,
@@ -39,6 +41,7 @@ class PersonRepository(BaseRepository):
                 person.discovery_origin, person.evidence_tier, int(person.review_required),
                 person.enrichment_status, person.enrichment_provider,
                 person.enrichment_updated_at, person.notes,
+                person.discovery_source,
             ),
         )
         self.conn.commit()
@@ -74,6 +77,10 @@ class PersonRepository(BaseRepository):
         self.conn.execute("UPDATE persons SET score = ? WHERE id = ?", (score, person_id))
         self.conn.commit()
 
+    def delete(self, person_id: str) -> None:
+        self.conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))
+        self.conn.commit()
+
     @staticmethod
     def _to_model(row: sqlite3.Row) -> Person:
         return Person(
@@ -95,6 +102,7 @@ class PersonRepository(BaseRepository):
             enrichment_provider=row["enrichment_provider"],
             enrichment_updated_at=row["enrichment_updated_at"],
             notes=row["notes"],
+            discovery_source=row["discovery_source"],
         )
 
     def _ensure_columns(self) -> None:
@@ -123,7 +131,7 @@ class PersonRepository(BaseRepository):
         rows = self.conn.execute(
             """SELECT p.id, p.github_username, p.contact_info, p.discovery_origin,
                       p.evidence_tier, p.review_required, p.enrichment_status,
-                      p.enrichment_provider,
+                      p.enrichment_provider, p.discovery_source,
                       EXISTS (
                           SELECT 1 FROM provider_identities pi
                           WHERE pi.person_id = p.id
@@ -182,19 +190,26 @@ class PersonRepository(BaseRepository):
             elif enrichment_status == "provider_enriched" and not enrichment_provider:
                 enrichment_provider = contact.get("enriched_by")
 
+            source = row["discovery_source"]
+            if not source and origin == "provider_search":
+                provider = contact.get("discovered_via")
+                if provider in ("pdl", "coresignal"):
+                    source = f"{provider}_discovery"
+
             if (
                 origin == row["discovery_origin"]
                 and tier == row["evidence_tier"]
                 and review_required == bool(row["review_required"])
                 and enrichment_status == row["enrichment_status"]
                 and enrichment_provider == row["enrichment_provider"]
+                and source == row["discovery_source"]
             ):
                 continue
             self.conn.execute(
                 """UPDATE persons
                    SET discovery_origin = ?, evidence_tier = ?,
                        review_required = ?, enrichment_status = ?,
-                       enrichment_provider = ?
+                       enrichment_provider = ?, discovery_source = ?
                    WHERE id = ?""",
                 (
                     origin,
@@ -202,6 +217,7 @@ class PersonRepository(BaseRepository):
                     int(review_required),
                     enrichment_status,
                     enrichment_provider,
+                    source,
                     row["id"],
                 ),
             )

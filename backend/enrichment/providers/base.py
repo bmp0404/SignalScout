@@ -86,6 +86,11 @@ class ProviderSearchPage:
     api_requests: int = 0
     returned_records: int = 0
     credit_units: int = 0
+    # Optional provider-billing split (Coresignal bills Search and Collect
+    # separately); providers that don't distinguish leave both 0 and rely on
+    # credit_units alone.
+    search_credits: int = 0
+    collect_credits: int = 0
 
 
 class EnrichmentProvider(ABC):

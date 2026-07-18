@@ -1,0 +1,10 @@
+{
+  "_note": "Public competition results/rosters for free-source discovery (CompetitionScraper). Devpost is intentionally excluded here — it already has a dedicated teammate-graph scraper (backend/scrapers/devpost_scraper.py). URLs are each competition's public site; deep results-page paths are NOT verified live (extract_leads() fails soft to [] on unparseable pages).",
+  "sources": [
+    { "id": "usaco", "name": "USACO", "url": "https://usaco.org" },
+    { "id": "imo", "name": "IMO", "url": "https://www.imo-official.org" },
+    { "id": "ioi", "name": "IOI", "url": "https://ioinformatics.org" },
+    { "id": "putnam", "name": "Putnam", "url": "https://www.maa.org/putnam-competition" },
+    { "id": "regeneron_sts", "name": "Regeneron STS", "url": "https://www.societyforscience.org/regeneron-sts" }
+  ]
+}

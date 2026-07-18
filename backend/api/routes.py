@@ -250,6 +250,50 @@ def build_router(container: Container) -> APIRouter:
         _require_admin_secret(container, authorization)
         return container.discovery_job.status()
 
+    @router.get("/discovery/recipes")
+    def list_discovery_recipes(authorization: str | None = Header(default=None)):
+        _require_admin_secret(container, authorization)
+        return {"recipes": container.discovery_recipe_service.list_recipes()}
+
+    @router.post("/discovery/recipes/{recipe_id}/approve")
+    def approve_discovery_recipe(recipe_id: str, authorization: str | None = Header(default=None)):
+        _require_admin_secret(container, authorization)
+        try:
+            return container.discovery_recipe_service.approve(recipe_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/discovery/recipes/{recipe_id}/run")
+    def run_discovery_recipe(
+        recipe_id: str,
+        limit: int | None = Query(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        _require_admin_secret(container, authorization)
+        try:
+            return container.discovery_recipe_service.run(recipe_id, override_limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    @router.post("/discovery/recipes/{recipe_id}/dry-run")
+    def dry_run_discovery_recipe(
+        recipe_id: str,
+        limit: int | None = Query(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        _require_admin_secret(container, authorization)
+        try:
+            return container.discovery_recipe_service.dry_run(recipe_id, override_limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/discovery/cost-summary")
+    def discovery_cost_summary(authorization: str | None = Header(default=None)):
+        _require_admin_secret(container, authorization)
+        return container.discovery_recipe_service.cost_summary()
+
     @router.post("/digests/send")
     def send_digest(authorization: str | None = Header(default=None)):
         _require_admin_secret(container, authorization)

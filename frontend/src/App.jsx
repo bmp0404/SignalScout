@@ -3,8 +3,9 @@ import { api } from './api/client.js';
 import Backtest from './pages/Backtest.jsx';
 import Digest from './pages/Digest.jsx';
 import Discover from './pages/Discover.jsx';
+import DiscoveryAdmin from './pages/DiscoveryAdmin.jsx';
 
-const TABS = ['Discover', 'Backtest', 'Digest'];
+const TABS = ['Discover', 'Backtest', 'Digest', 'Admin'];
 
 export default function App() {
   const [tab, setTab] = useState('Discover');
@@ -49,6 +50,7 @@ export default function App() {
         {tab === 'Discover' && <Discover />}
         {tab === 'Backtest' && <Backtest />}
         {tab === 'Digest' && <Digest />}
+        {tab === 'Admin' && <DiscoveryAdmin />}
       </main>
     </div>
   );

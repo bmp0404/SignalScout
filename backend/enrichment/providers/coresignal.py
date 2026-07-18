@@ -38,8 +38,20 @@ SEARCH_FILTERS = {
     "location": "location",
     "country": "location_country",
     "created_at_gte": "created_at_gte",  # first-seen lower bound (recent profiles)
+    # Founder-recipe fields — verify exact keys against the live employee_base
+    # schema before relying on them; unsupported keys are silently dropped.
+    "previous_company": "experience_company_name",  # e.g. FAANG-to-startup match
+    "company_size_lte": "active_experience_company_employees_count_lte",
+    "company_founded_gte": "active_experience_company_founded_year_gte",
 }
 MAX_SEARCH_SIZE = 100
+
+# company_base collection filters (company-first discovery step 1).
+COMPANY_SEARCH_FILTERS = {
+    "founded_gte": "founded_year_gte",
+    "employees_count_lte": "employees_count_lte",
+    "industry": "industry",
+}
 
 
 class CoresignalProvider(EnrichmentProvider):
@@ -124,6 +136,8 @@ class CoresignalProvider(EnrichmentProvider):
             # This is an internal conservative request-unit ledger, not a claim
             # about Coresignal invoice semantics.
             credit_units=search_requests + len(selected),
+            search_credits=search_requests,
+            collect_credits=len(selected),
         )
 
     @staticmethod
@@ -168,6 +182,80 @@ class CoresignalProvider(EnrichmentProvider):
             self.last_error = str(exc)
             logger.warning("Coresignal search request failed: %s", exc)
             return []
+
+    def search_companies(self, filters: dict, size: int = 10) -> list[dict]:
+        """Company-first discovery step 1: seed-stage companies via company_base
+        search + collect. Returns raw company records (id, name, employee
+        count) — not EnrichmentResult, since companies aren't people."""
+        self.last_error = None
+        allowed = {}
+        for key, value in (filters or {}).items():
+            column = COMPANY_SEARCH_FILTERS.get(key)
+            if not column:
+                logger.warning("Coresignal company search: ignoring unsupported filter %r", key)
+                continue
+            if value:
+                allowed[column] = value
+        if not allowed:
+            return []
+        try:
+            resp = self.session.post(f"{API}/company_base/search/filter", json=allowed, timeout=20)
+            if resp.status_code == 404:
+                return []
+            if resp.status_code != 200:
+                self.last_error = f"HTTP {resp.status_code}"
+                logger.warning("Coresignal company search -> %s: %s", resp.status_code, resp.text[:200])
+                return []
+            payload = resp.json()
+            ids = payload if isinstance(payload, list) else []
+        except requests.RequestException as exc:
+            self.last_error = str(exc)
+            logger.warning("Coresignal company search request failed: %s", exc)
+            return []
+        companies = []
+        for company_id in ids[:size]:
+            record = self._collect_company(company_id)
+            if record:
+                companies.append(record)
+        return companies
+
+    def search_company_employees(
+        self, company_id, title_filters: dict, size: int = 10
+    ) -> list[EnrichmentResult]:
+        """Company-first discovery step 2: employee_base search scoped to one
+        company (an internal join key, not part of the allowlisted recipe
+        filters) for founder/co-founder/CEO titles."""
+        self.last_error = None
+        allowed = self._build_filters(title_filters)
+        allowed["active_experience_company_id"] = company_id
+        ids = self._search(allowed)
+        if not ids:
+            return []
+        results = []
+        for record_id in ids[:size]:
+            record = self._collect(record_id)
+            if record:
+                results.append(self._map_person(record))
+        return results
+
+    def _collect_company(self, company_id) -> dict | None:
+        try:
+            encoded_id = quote(str(company_id), safe="")
+            resp = self.session.get(f"{API}/company_base/collect/{encoded_id}", timeout=20)
+            if resp.status_code != 200:
+                self.last_error = f"HTTP {resp.status_code}"
+                logger.warning("Coresignal company collect %s -> %s: %s", company_id, resp.status_code, resp.text[:200])
+                return None
+            data = resp.json()
+        except requests.RequestException as exc:
+            self.last_error = str(exc)
+            logger.warning("Coresignal company collect request failed: %s", exc)
+            return None
+        return {
+            "id": data.get("id", company_id),
+            "name": data.get("company_name") or data.get("name"),
+            "employees_count": data.get("employees_count"),
+        }
 
     def _collect(self, record_id) -> dict | None:
         try:

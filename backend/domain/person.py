@@ -32,6 +32,7 @@ class Person:
     score: float | None = None
     needs_review: bool = False
     discovery_origin: str | None = None
+    discovery_source: str | None = None  # e.g. "pdl_discovery", "coresignal_discovery"
     evidence_tier: str | None = None
     review_required: bool = False
     enrichment_status: str | None = None

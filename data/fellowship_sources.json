@@ -1,0 +1,11 @@
+{
+  "_note": "Public fellowship pages for free-source discovery (FellowshipScraper). URLs point at each program's public site; deep cohort/alumni-listing paths are NOT verified live and commonly change or require JS rendering (extract_leads() fails soft to [] when a page has no name+link pairs). Update `url` to a specific cohort page once confirmed scrapable.",
+  "sources": [
+    { "id": "z_fellows", "name": "Z Fellows", "url": "https://zfellows.com" },
+    { "id": "thiel_fellowship", "name": "Thiel Fellowship", "url": "https://thielfellowship.org" },
+    { "id": "neo_scholars", "name": "Neo Scholars", "url": "https://neo.com/scholars" },
+    { "id": "1517_fund", "name": "1517 Fund", "url": "https://www.1517fund.com" },
+    { "id": "contrary_talent", "name": "Contrary Talent", "url": "https://contrary.com/talent" },
+    { "id": "interact_fellowship", "name": "Interact Fellowship", "url": "https://interactfellowship.org" }
+  ]
+}

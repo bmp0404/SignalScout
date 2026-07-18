@@ -1,6 +1,6 @@
 # Tests
 
-These files verify graph-expansion/scoring behavior, the subscriber digest pipeline and its API endpoints, small polish-phase API/CLI behaviors, the multi-provider enrichment and provider-search discovery chain, and public-release security gating (auth, secret exposure, fail-closed config).
+These files verify graph-expansion/scoring behavior, the subscriber digest pipeline and its API endpoints, small polish-phase API/CLI behaviors, the multi-provider enrichment chain and both provider-search discovery paths (batch `expand()` and the recipe layer's `run_recipe()`, including company-first discovery), free-source (fellowship/competition) lead extraction and resolution, adapter allowlisting/escaping and PDL's scroll-token pagination, and public-release security gating (auth, secret exposure, fail-closed config).
 
 ## tests/test_graph_expansion_deepening.py
 Covers GitHub REST call shaping, niche-repo surface-based graph expansion (stargazers/forkers/issue-PR interactions), Devpost/Semantic Scholar collaboration promotion with repeat-metadata, discovery-vs-founder scoring compounding, and opt-in idempotent fellowship seed loading, using fake GitHub/Devpost/Scholar clients (`FakeGithubClient`, `FakeDevpost`, `FakeScholarClient`, `RecordingSession`) against a temp SQLite `Container`.
@@ -40,8 +40,31 @@ Covers the minimal-field analytics page-view endpoint and the `build_db.py --if-
 - `test_page_view_rejects_absolute_external_urls()` — asserts posting an absolute external URL as `path` is rejected with 422.
 - `test_if_empty_seed_does_not_replace_existing_people()` — runs `scripts/build_db.py --if-empty` as a subprocess twice (inserting a manual row between runs) and asserts the second run leaves the manually inserted row and existing count untouched, only the initial seed count remains constant.
 
+## tests/test_free_source_discovery.py
+Covers Phase 3 free-source discovery: generic HTML lead extraction (`extract_leads`), the `ConfigSourceScraper` base class (`FellowshipScraper`/`CompetitionScraper`), and `LeadResolver`'s dedupe-first + paid-lookup-fallback resolution. Reuses `ChainTestBase`/`FakeProvider`/`make_result` from `test_provider_diversification.py` (imported directly, no shared `tests/__init__.py`) so budget/cache setup stays identical to the provider-search tests.
+
+- `ExtractLeadsTests`
+  - `test_name_near_linkedin_link_becomes_a_lead()` — asserts a name adjacent to a LinkedIn `href` in raw HTML produces one `RawLead` with the LinkedIn URL captured.
+  - `test_name_near_github_link_captures_username()` — asserts a name adjacent to a GitHub `href` captures the GitHub username.
+  - `test_name_with_no_nearby_link_is_dropped()` — asserts a name with no link anywhere in its window produces no lead.
+  - `test_empty_html_returns_no_leads()` — asserts empty input returns `[]`.
+  - `test_duplicate_names_on_one_page_are_deduped()` — asserts the same name appearing twice on one page (even with different nearby links) only produces one lead.
+  - `test_max_leads_is_respected()` — asserts `extract_leads(..., max_leads=3)` never returns more than 3 leads even when more qualifying names are present.
+- `ConfigScraperTests`
+  - `test_fellowship_scraper_is_a_config_source_scraper()` — asserts `FellowshipScraper` subclasses `ConfigSourceScraper` with `name == "fellowship"`.
+  - `test_competition_scraper_is_a_config_source_scraper()` — asserts `CompetitionScraper` subclasses `ConfigSourceScraper` with `name == "competition"`.
+  - `test_scrape_extracts_leads_from_configured_sources()` — asserts `scrape()` fetches every configured source and runs its HTML through `extract_leads`, using a fake `_Session`/`_Resp`.
+  - `test_missing_sources_file_is_fail_soft()` — asserts a nonexistent sources file makes `scrape()` return `[]`, not raise.
+  - `test_bad_http_status_is_fail_soft()` — asserts a non-200 response from a source URL is skipped, not raised.
+- `LeadResolverTests` (`ChainTestBase`)
+  - `test_lead_matching_existing_candidate_by_linkedin_is_skipped()` — asserts a lead whose LinkedIn URL matches an existing person (linked via `identities.link`) is bucketed into `matched`, no provider call is made, and no duplicate person is inserted.
+  - `test_lead_matching_existing_candidate_by_name_and_school_is_skipped()` — asserts the name+school fallback ladder tier also skips the paid lookup.
+  - `test_unresolved_lead_tries_pdl_identify_before_giving_up()` — asserts a lead with no existing match calls `enricher.run()`, creates a `discovery_source`-tagged `Person` on a match, and inserts exactly one person.
+  - `test_pdl_identify_miss_leaves_lead_unresolved_and_uninserted()` — asserts a definitive PDL miss buckets the lead into `unresolved` and inserts nobody (the tentative row is rolled back via `persons.delete`).
+  - `test_provider_outage_leaves_lead_unresolved_without_billing()` — asserts a transient provider error also leaves the lead unresolved/uninserted and spends no budget (mirrors `ProviderEnricher`'s "error is not a definitive miss" contract).
+
 ## tests/test_provider_diversification.py
-Fixture-driven tests (HTTP layer mocked, providers faked; never spend real credits) covering the PDL->Coresignal enrichment chain (caching, budgets, fallback, fail-soft outages), provider-search discovery (no-GitHub candidates, cross-provider dedupe/merge, pagination checkpointing, evidence-tier classification), adapter allowlisting/escaping for PDL and Coresignal query builders, raw HTTP response mapping for both adapters, and an unchanged-founder-backtest regression guard.
+Fixture-driven tests (HTTP layer mocked, providers faked; never spend real credits) covering the PDL->Coresignal enrichment chain (caching, budgets, fallback, fail-soft outages), both provider-search discovery paths — batch `ProviderExpander.expand()` (no-GitHub candidates, cross-provider dedupe/merge, pagination checkpointing, evidence-tier classification) and the recipe layer's `ProviderExpander.run_recipe()` (approval gating, founder vs. student_technical admission, relative-date filter computation, dedupe, hard limits, budget exhaustion, and company-first discovery) — adapter allowlisting/escaping for PDL and Coresignal query builders, raw HTTP response mapping for both adapters (including PDL's `scroll_token` pagination), and an unchanged-founder-backtest regression guard. `ChainTestBase` exposes shared `_filters_file`/`_expander` helpers used by every provider-search test class in this file (and reused by `test_free_source_discovery.py`).
 
 - `test_cache_prevents_repeat_calls_within_ttl()` — asserts a second `enrich()` call for the same person returns no new signals and the provider is called only once (served from cache).
 - `test_cached_miss_is_not_refetched()` — asserts a definitive no-match is cached so the provider isn't called again on retry.
@@ -62,6 +85,23 @@ Fixture-driven tests (HTTP layer mocked, providers faked; never spend real credi
 - `test_recent_technical_education_is_selected_over_undated_entry()` — asserts the person's `school` field picks a recent, dated technical-education entry over an undated business-school entry.
 - `test_undated_technical_education_is_rejected()` — asserts a record whose only education entry is undated is rejected with reason `undated_or_stale_education`.
 - `test_search_error_is_audited_without_advancing_or_spending()` — asserts a provider search HTTP error is recorded in the checkpoint (`error_count`, `last_outcome`) without advancing the page or consuming search-lane usage.
+- `RecipeTests` (recipe-layer engine tests, via `ProviderExpander.run_recipe`)
+  - `test_recipe_run_requires_approval()` — asserts a real (non-dry) run of a `pending`-approval recipe raises `PermissionError` before ever calling the provider.
+  - `test_recipe_run_requires_approval_even_when_provider_unconfigured()` — regression test for an ordering bug caught during live testing: asserts the approval check runs *before* the provider lookup, so an unapproved recipe still raises `PermissionError` even when its provider isn't in `self.providers` (previously the provider-lookup short-circuit skipped the approval check entirely).
+  - `test_recipe_dry_run_allowed_without_approval_and_spends_nothing()` — asserts a `pending`-approval recipe's dry run still returns a result, never calls the provider, inserts nobody, and spends no budget.
+  - `test_founder_admission_admits_without_technical_education()` — asserts a `query_type="founder"` recipe admits a record with an MBA (non-technical) education as long as it has a founder-titled position, tagging the created person's `discovery_source` as `"pdl_discovery"`.
+  - `test_student_technical_admission_rejects_same_record_without_technical_education()` — the contrasting case: the identical record run through a `query_type="student_technical"` recipe is rejected with reason `"nontechnical_or_missing_education"` — proves `query_type` actually changes the admission outcome, not just cosmetically.
+  - `test_relative_filters_computed_at_run_time()` — asserts a recipe's `relative_filters={"job_start_date_gte": 30}` reaches the provider as an absolute date (today minus 30 days), recomputed fresh on every run.
+  - `test_recipe_dedupes_against_existing_github_candidate_by_name_and_school()` — asserts a recipe run against a name+school match to an existing GitHub-origin person merges into that person (not a new insert) and marks it provider-enriched.
+  - `test_recipe_hard_caps_results_at_default_limit()` — asserts a recipe never creates more people than its `default_limit`, even when the provider returns more.
+  - `test_recipe_budget_exhausted_blocks_real_run()` — asserts a recipe with `pdl_monthly_cap=0` creates nobody and never calls the provider (fail-soft budget stop, not an error).
+- `FakeCompanyFirstProvider` — `FakeProvider` subclass adding `search_companies`/`search_company_employees` (with call-count tracking) for testing `_run_company_first`.
+- `CompanyFirstRecipeTests` (`ChainTestBase`)
+  - `test_company_first_creates_candidates_via_shared_ingest()` — asserts a `company_first` recipe run calls `search_companies` then `search_company_employees` per company, creating a person via the same `_ingest` path (`discovery_source="coresignal_discovery"`).
+  - `test_company_first_dry_run_spends_nothing()` — asserts dry-run mode calls `search_companies` (to plan) but never `search_company_employees` (step 2 never runs), and spends no budget.
+  - `test_company_first_requires_approval()` — asserts the same approval gate `run_recipe` enforces for filter-set recipes also applies to `company_first` recipes.
+  - `test_company_first_dedupes_across_companies()` — asserts the same person returned by two different companies' employee searches is deduped (one created, one counted as a duplicate).
+  - `test_search_and_collect_credits_tracked_separately()` — asserts `recipe_checkpoint(recipe)` reports non-zero `search_credit_units` and `collect_credit_units` after a company-first run.
 - `test_queue_prioritizes_high_scoring_github_only_candidates()` — asserts `ProviderEnricher.prioritize()` orders pending GitHub-only candidates by descending score.
 - `test_enrichment_statuses_cover_match_miss_error_and_budget()` — asserts `enrichment_status` is set correctly for matched, no-match, error, and budget-exhausted (`pending_budget`) outcomes.
 - `test_candidate_payload_exposes_rebalance_metadata()` — asserts `CandidateService.list_candidates()` payload surfaces `discovery_origin`, `evidence_status`/`evidence_tier`, `review_required`, and `enrichment_status`.
@@ -72,9 +112,10 @@ Fixture-driven tests (HTTP layer mocked, providers faked; never spend real credi
 - `test_pdl_escape_strips_control_chars()` — asserts `PdlProvider._escape()` correctly escapes quotes and strips newlines.
 - `test_coresignal_filters_are_allowlisted()` — asserts `CoresignalProvider._build_filters()` maps only allowlisted keys (school/location) and drops unknown ones.
 - `test_pdl_enrich_maps_200_and_handles_404_and_error()` — asserts `PdlProvider.enrich_person()` maps a 200 response to a populated `EnrichmentResult`, treats 404 as a clean cacheable miss (`last_error=None`), and treats 401 as a non-cacheable error (`last_error="HTTP 401"`).
-- `test_pdl_search_page_uses_persistable_offset()` — asserts `PdlProvider.search_page()` sends the correct `from` offset and returns correct `returned_records`/`credit_units`/`exhausted` values.
+- `test_pdl_search_page_first_request_omits_scroll_token()` — asserts the first `search_page()` call (no cursor) sends neither `scroll_token` nor the deprecated `from` param, and that a `scroll_token` present in the response with a full page of results yields `exhausted=False`/`next_cursor` set to that token.
+- `test_pdl_search_page_resumes_with_scroll_token()` — asserts a resumed call sends `scroll_token` (not `from`) equal to the given cursor, and that a response with fewer records than requested and no `scroll_token` yields `exhausted=True`.
 - `test_coresignal_search_page_offsets_collects_and_counts_requests()` — asserts `CoresignalProvider.search_page()` tracks API request/credit counts across a paginated collect-then-detail-fetch flow and resumes correctly from a serialized cursor.
-- `test_founder_backtest_unchanged()` — regression guard asserting the founder backtest recall (`70.0%`) and false-positive rate (`1.7%`) are unchanged against the real seeded `signal_scout.db` (skipped if that DB or founders aren't present).
+- `test_founder_backtest_unchanged()` — regression guard asserting the founder backtest recall (`70.0%`) and false-positive rate (`1.7%`) are unchanged against the real seeded `signal_scout.db` (skipped if that DB or founders aren't present). Currently failing against the live `signal_scout.db` in this repo (`56.7%` recall) — pre-existing, unrelated to the provider-discovery work in this doc revision; confirmed present on an unmodified checkout too.
 
 ## tests/test_public_release_security.py
 Covers that candidate browsing stays public while operator/admin routes are bearer-gated, that admin preview does not record a real send, that public signup never leaks the subscriber's action token, and that production config fails closed when secrets are missing.

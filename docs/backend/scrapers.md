@@ -1,15 +1,28 @@
 # Scrapers
 
-The scrapers module collects raw evidence from external sources (GitHub, Devpost, Semantic Scholar, OpenAlex) and curated fixture files, converting each into the shared `Signal` (and sometimes `GraphEdge`) domain records that the scoring module consumes. Every scraper is designed to fail soft — partial or total source failures degrade gracefully to an empty result rather than raising.
+The scrapers module collects raw evidence from external sources (GitHub, Devpost, Semantic Scholar, OpenAlex, fellowship/competition pages) and curated fixture files, converting each into the shared `Signal` (and sometimes `GraphEdge`) domain records that the scoring module consumes, or — for the free-source discovery lane (`fellowship_scraper.py`, `competition_scraper.py`, `resolve.py`) — into candidate leads resolved against existing `Person` records. Every scraper is designed to fail soft — partial or total source failures degrade gracefully to an empty result rather than raising.
 
 ## backend/scrapers/__init__.py
 Empty package marker file; no code.
 
 ## backend/scrapers/base.py
-Defines the shared abstract scraper contract that concrete scrapers implement.
+Defines the shared abstract scraper contract that concrete signal-emitting scrapers implement.
 
 - `BaseScraper` — abstract base class establishing the common scraper interface: a `name` attribute identifying the source, and a `scrape()` method contract requiring implementations to never raise on partial failure and instead return whatever was successfully collected.
   - `BaseScraper.scrape() -> list[Signal]` — abstract method; concrete scrapers collect and return signals from their source, degrading gracefully (returning partial/empty results) rather than raising on failure.
+
+## backend/scrapers/competition_scraper.py
+`CompetitionScraper` — a one-line subclass of `ConfigSourceScraper` (`name = "competition"`) pointed at `data/competition_sources.json` (loaded via `Settings.competition_sources_file`). Covers USACO, IMO, IOI, Putnam, Regeneron STS. Devpost is intentionally excluded — it already has a dedicated teammate-graph scraper (`devpost_scraper.py`); duplicating it here as a plain lead-extraction source would produce lower-quality leads than the existing bespoke parser.
+
+## backend/scrapers/config_scraper.py
+Shared scrape-from-JSON-source-list base class factored out of `fellowship_scraper.py`/`competition_scraper.py` (they were otherwise near-identical). Same config-file convention as `backend/discovery/openalex_labs.py`'s `targets_file`, so URLs can be corrected without a code change.
+
+- `USER_AGENT` — module-level browser-like User-Agent string used for every request.
+- `ConfigSourceScraper` — base class for a scraper whose targets are a JSON list of `{id, url}` sources; subclasses set only `name` and are constructed with their own sources file.
+  - `ConfigSourceScraper.__init__(sources_file, session=None)` — stores the sources file path and creates/stores a `requests.Session` with `USER_AGENT`.
+  - `ConfigSourceScraper.scrape(source_id=None, max_leads_per_source=50) -> list[RawLead]` — fetches every configured source (or just one matching `source_id`) and runs each page's HTML through `lead_extraction.extract_leads`, returning the combined `RawLead` list.
+  - `ConfigSourceScraper._get(url) -> str | None` — fetches a URL, returning the HTML text or `None` on any non-200 response or request exception (logged, never raised).
+  - `ConfigSourceScraper._sources() -> list[dict]` — reads and JSON-parses the sources file's `"sources"` array, returning `[]` and logging a warning if missing/invalid.
 
 ## backend/scrapers/devpost_scraper.py
 Scrapes public Devpost hackathon portfolio and project pages via stdlib regex (no official API) to emit hackathon win/finalist signals and teammate connection edges; source is public HTML at devpost.com, no auth/env vars required.
@@ -23,6 +36,9 @@ Scrapes public Devpost hackathon portfolio and project pages via stdlib regex (n
   - `DevpostScraper.collect(person, devpost_username) -> tuple[list[Signal], list[GraphEdge]]` — for a person's Devpost username, fetches up to `max_projects` projects they're confirmed team members of, emitting a `hackathon_win` signal (strength 0.8) for won submissions or `hackathon_finalist` (strength 0.6) for finalist submissions, plus `hackathon_teammate` graph edges to every other team member on each project.
   - `DevpostScraper._submission_date(hackathon, fallback) -> str` (static) — best-effort submission date derived from a 4-digit year found in the hackathon name, falling back to a provided date string.
   - `DevpostScraper._project_date(project, fallback) -> str` (static) — best-effort project date taken from the year in the first submission's hackathon name that matches, falling back to a provided date string.
+
+## backend/scrapers/fellowship_scraper.py
+`FellowshipScraper` — a one-line subclass of `ConfigSourceScraper` (`name = "fellowship"`) pointed at `data/fellowship_sources.json` (loaded via `Settings.fellowship_sources_file`). Covers Z Fellows, Thiel Fellowship, Neo Scholars, 1517 Fund, Contrary Talent, Interact Fellowship. Not to be confused with `backend/discovery/fellowship_seeds.py` (a static, hand-curated alumni list, no live HTTP).
 
 ## backend/scrapers/github_scraper.py
 The only live (non-seeded) scraper: pulls a GitHub user's public profile, repos, and social/follow data via the GitHub REST API to derive builder, star-project, prolific, and student signals plus follow edges. Requires the `GITHUB_TOKEN` env var (used by the caller to construct `GithubClient`); without a token the pipeline falls back to the seeded fixture `data/seed_signals/github_seeded.json` so the demo doesn't break.
@@ -49,6 +65,42 @@ The only live (non-seeded) scraper: pulls a GitHub user's public profile, repos,
   - `GithubScraper.scrape_user(username, user=None) -> list[Signal]` — fetches (or reuses) a user's profile and repos, then emits: a `github_early_builder` signal (strength 0.7) if the account has 3+ repos; a `github_star_project` signal per repo with 100+ stars (strength 0.9 if 1000+, else 0.6); a `github_prolific` signal (strength 0.5) if the user has 30+ repos; and a `student_builder` signal (strength 0.7) if the bio matches `looks_like_student`.
   - `GithubScraper.follow_edges(username, name) -> list[GraphEdge]` — builds `github_follows` graph edges from each of the user's followers to the user.
 
+## backend/scrapers/lead_extraction.py
+Generic, best-effort HTML lead extraction shared by `fellowship_scraper.py` and `competition_scraper.py` (via `ConfigSourceScraper.scrape`). Real cohort/results pages vary in markup and many are JS-rendered (unparseable here) — this extracts whatever a name is near: a LinkedIn URL, a GitHub URL, or a personal site. Never raises; unparseable pages simply yield no leads.
+
+- `NAME_RE`, `LINKEDIN_RE`, `GITHUB_RE`, `PERSONAL_SITE_RE` — module-level compiled regexes for name-like text, LinkedIn profile URLs, GitHub profile URLs, and a non-LinkedIn/GitHub/Twitter personal-site URL, respectively.
+- `WINDOW = 300` — characters to look around a matched name for nearby links.
+- `extract_leads(html, source, source_url="", school=None, year=None, max_leads=50) -> list[RawLead]` — finds name-like text directly in the raw HTML (URLs live in `href` attributes, so tags are never stripped before this search — an earlier tag-stripped-first version destroyed the hrefs before the link regexes could see them), then for each match looks in a `WINDOW`-character radius for a LinkedIn URL, a GitHub URL, or (only if neither is found) a personal-site URL; a name with no nearby link anywhere in its window is dropped as too ambiguous to be worth a paid lookup downstream; de-dupes by lower-cased name within one page and stops at `max_leads`.
+- `_first(pattern, text) -> str | None` — returns the first regex match in `text`, or `None`.
+
+## backend/scrapers/openalex.py
+Scrapes the free, unauthenticated OpenAlex API (author search -> works -> co-authors) to emit co-authored-paper signals and `co_author` graph edges for discovery-cohort people with real names — same shape as `semantic_scholar.py`, used both for co-author expansion of known people and by `backend/discovery/openalex_labs.py`'s lab-affiliation lead-gen. No API key required; a `mailto` param is honored for OpenAlex's polite pool (priority routing/higher limits). The client backs off and retries on HTTP 429 and fails soft.
+
+- `OpenAlexClient` — thin wrapper around the OpenAlex API with retry/backoff on rate limiting; all failures return `None`/`[]`.
+  - `OpenAlexClient.__init__(mailto="", max_retries=3, backoff_seconds=2.0)` — sets up a `requests.Session`, stores the polite-pool `mailto` (attached to every request when set).
+  - `OpenAlexClient._get(path, params=None)` — issues a GET request, retrying with linearly increasing backoff on HTTP 429 up to `max_retries` times, returning parsed JSON or `None` on any other failure or exhausted retries.
+  - `OpenAlexClient.search_author(name) -> list[dict]` — searches for authors by name, returning candidate records with id/display_name/works_count/cited_by_count.
+  - `OpenAlexClient.author(author_id) -> dict | None` — fetches one author's full record (works_count, cited_by_count, summary_stats, last_known_institutions).
+  - `OpenAlexClient.author_works(author_id, limit=10) -> list[dict]` — fetches an author's works (id/title/publication_year/publication_date/authorships) up to `limit`.
+  - `OpenAlexClient.works_by_affiliation(affiliation, from_date=None, limit=25, institution_id=None) -> list[dict]` — fetches recent works matching a lab: filters by the precise `institutions.id` when OpenAlex has resolved the lab as its own institution (e.g. MIT CSAIL), otherwise falls back to a free-text `raw_affiliation_strings.search` match (e.g. Stanford SAIL/Berkeley BAIR, which OpenAlex hasn't resolved separately from their university) — no HTML scraping of lab pages either way.
+- `MAX_AUTHOR_WORKS = 30`, `MAX_AUTHOR_CITED_BY = 500` — the early-career gate thresholds: above either, an author reads as an established researcher, not a pre-breakout person.
+- `OpenAlexScraper` — per-person collector that resolves a person to an OpenAlex author and emits co-authorship signals/edges; capped so one person costs at most 2 API calls.
+  - `OpenAlexScraper.has_real_name` — the same static check as `SemanticScholarScraper.has_real_name` (imported, not duplicated).
+  - `OpenAlexScraper.is_early_career(author) -> bool` (static) — `True` when `1 <= works_count <= MAX_AUTHOR_WORKS` and `cited_by_count <= MAX_AUTHOR_CITED_BY`.
+  - `OpenAlexScraper.find_author(name) -> dict | None` — searches for an author by name and returns the single normalized-name-exact, early-career match; ambiguous or prolific results are treated as no match.
+  - `OpenAlexScraper.collect(person, author=None) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` co-authored works (skipping solo works with no co-authors) emits a `co_authored_paper` signal (strength 0.6, `source="openalex"`) per work and a `co_author` graph edge (`source="openalex"`) to up to `max_coauthors_per_paper` co-authors per work.
+
+## backend/scrapers/resolve.py
+`LeadResolver`: dedupe-first matching of `RawLead`s (extracted by `fellowship_scraper.py`/`competition_scraper.py`) against existing candidates, then a bounded paid lookup for anyone unresolved. Source-specific HTML parsing lives in the scrapers; this module only ever sees the extracted `RawLead`, never raw HTML. Reuses `ProviderEnricher.run()` — the same PDL/Coresignal single-person enrichment path GitHub candidates go through — for the paid-lookup step, so budget/cache/signal-emission behave identically regardless of how a candidate was found.
+
+- `RawLead` — dataclass holding the strongest identifiers a free-source scraper could extract for one person: `name`, `source` (e.g. `"z_fellows"`, `"usaco"`), `source_url`, `school`, `company`, `year`, `linkedin_url`, `personal_site`, `github_username` — everything but `name`/`source` is best-effort and may be empty.
+- `ResolveResult` — dataclass holding `matched` (leads that resolved to an already-stored `Person`), `created` (leads newly identified via a paid lookup), `unresolved` (leads with no match and no confirmable paid-lookup result).
+- `LeadResolver` — composes `PersonRepository`, `ProviderIdentityRepository`, `ProviderEnricher`.
+  - `LeadResolver.__init__(persons, identities, enricher)` — stores the repositories/enricher used for dedupe and identification.
+  - `LeadResolver.resolve(leads) -> ResolveResult` — for each lead, checks `_find_existing` first (skip — no paid lookup) and only calls `_identify` (paid lookup) for leads with no existing match; buckets every lead into `matched`/`created`/`unresolved`.
+  - `LeadResolver._find_existing(lead) -> Person | None` — standard ladder minus provider ID (free sources don't have one): LinkedIn URL (via `identities.find_person_by_linkedin`) -> normalized name + school (scanning all persons, same matching rule `ProviderExpander._resolve_existing`'s third tier uses — matching school, or both sides having no school).
+  - `LeadResolver._identify(lead) -> Person | None` — builds a bare `Person` (name, school, linkedin_url, github_username, personal_site, `discovery_origin`/`discovery_source` both set to `lead.source`), saves it *before* calling `enricher.run(person)` (required because `run()` derives `Signal` rows that FK-reference `persons`, so the row must exist first), and deletes the tentative row (`persons.delete`) if the outcome isn't `"matched"` — since `run()` only derives signals for a matched outcome, nothing is orphaned by the rollback.
+
 ## backend/scrapers/seeded.py
 Loads curated signal fixtures from `data/seed_signals/*.json` for every non-GitHub source used in the demo; fixture shape mirrors exactly what a live scraper for that source would emit so a real scraper can later be swapped in without changing downstream code. No external network calls or env vars.
 
@@ -71,20 +123,3 @@ Scrapes the free, unauthenticated Semantic Scholar Graph API (author search -> p
   - `SemanticScholarScraper.find_author(name) -> dict | None` — searches for an author by name and returns the single normalized-name-exact match whose paper count is between 1 and `MAX_AUTHOR_PAPERS` (50), treating any ambiguous (multiple matches) or overly prolific (established academic) result as no match.
   - `SemanticScholarScraper.collect(person, author=None) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` co-authored papers (skipping solo papers with no co-authors) emits a `co_authored_paper` signal (strength 0.6) per paper and a `co_author` graph edge to up to `max_coauthors_per_paper` co-authors per paper.
   - `SemanticScholarScraper.collect_citations(person, author=None, max_papers=3, max_citations_per_paper=5) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` of their papers that have a `paperId`, fetches citing papers and emits a `paper_citation` graph edge (person -> citing author) per citing author, up to `max_citations_per_paper` per paper, plus a `cited_paper` signal (strength 0.6) per cited paper — but only when `person.cohort == "discovery"`, so a founder's pre-breakout score (and therefore the backtest reference scale) is never affected by this signal.
-
-## backend/scrapers/openalex.py
-Scrapes the free, unauthenticated OpenAlex API (author search -> works -> co-authors) to emit co-authored-paper signals and `co_author` graph edges for discovery-cohort people with real names — same shape as `semantic_scholar.py`, used both for co-author expansion of known people and by `backend/discovery/openalex_labs.py`'s lab-affiliation lead-gen. No API key required; a `mailto` param is honored for OpenAlex's polite pool (priority routing/higher limits). The client backs off and retries on HTTP 429 and fails soft.
-
-- `OpenAlexClient` — thin wrapper around the OpenAlex API with retry/backoff on rate limiting; all failures return `None`/`[]`.
-  - `OpenAlexClient.__init__(mailto="", max_retries=3, backoff_seconds=2.0)` — sets up a `requests.Session`, stores the polite-pool `mailto` (attached to every request when set).
-  - `OpenAlexClient._get(path, params=None)` — issues a GET request, retrying with linearly increasing backoff on HTTP 429 up to `max_retries` times, returning parsed JSON or `None` on any other failure or exhausted retries.
-  - `OpenAlexClient.search_author(name) -> list[dict]` — searches for authors by name, returning candidate records with id/display_name/works_count/cited_by_count.
-  - `OpenAlexClient.author(author_id) -> dict | None` — fetches one author's full record (works_count, cited_by_count, summary_stats, last_known_institutions).
-  - `OpenAlexClient.author_works(author_id, limit=10) -> list[dict]` — fetches an author's works (id/title/publication_year/publication_date/authorships) up to `limit`.
-  - `OpenAlexClient.works_by_affiliation(affiliation, from_date=None, limit=25, institution_id=None) -> list[dict]` — fetches recent works matching a lab: filters by the precise `institutions.id` when OpenAlex has resolved the lab as its own institution (e.g. MIT CSAIL), otherwise falls back to a free-text `raw_affiliation_strings.search` match (e.g. Stanford SAIL/Berkeley BAIR, which OpenAlex hasn't resolved separately from their university) — no HTML scraping of lab pages either way.
-- `MAX_AUTHOR_WORKS = 30`, `MAX_AUTHOR_CITED_BY = 500` — the early-career gate thresholds: above either, an author reads as an established researcher, not a pre-breakout person.
-- `OpenAlexScraper` — per-person collector that resolves a person to an OpenAlex author and emits co-authorship signals/edges; capped so one person costs at most 2 API calls.
-  - `OpenAlexScraper.has_real_name` — the same static check as `SemanticScholarScraper.has_real_name` (imported, not duplicated).
-  - `OpenAlexScraper.is_early_career(author) -> bool` (static) — `True` when `1 <= works_count <= MAX_AUTHOR_WORKS` and `cited_by_count <= MAX_AUTHOR_CITED_BY`.
-  - `OpenAlexScraper.find_author(name) -> dict | None` — searches for an author by name and returns the single normalized-name-exact, early-career match; ambiguous or prolific results are treated as no match.
-  - `OpenAlexScraper.collect(person, author=None) -> tuple[list[Signal], list[GraphEdge]]` — for a person with a real name, resolves (or reuses) their author record, then for up to `max_papers` co-authored works (skipping solo works with no co-authors) emits a `co_authored_paper` signal (strength 0.6, `source="openalex"`) per work and a `co_author` graph edge (`source="openalex"`) to up to `max_coauthors_per_paper` co-authors per work.

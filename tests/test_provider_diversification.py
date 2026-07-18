@@ -22,6 +22,7 @@ from backend.db.repositories.persons import PersonRepository
 from backend.db.repositories.provider_identities import ProviderIdentityRepository
 from backend.db.repositories.signals import SignalRepository
 from backend.discovery.provider_expansion import ProviderExpander
+from backend.domain.discovery_recipe import DiscoveryRecipe
 from backend.domain.person import Person
 from backend.enrichment.budgets import ProviderBudget
 from backend.enrichment.provider_enricher import ProviderEnricher
@@ -135,6 +136,23 @@ class ChainTestBase(unittest.TestCase):
         self.persons.save(person)
         return person
 
+    def _filters_file(self, pdl=None, coresignal=None, per_filter=10, per_run=25) -> Path:
+        path = Path(self.temp_dir.name) / "filters.json"
+        path.write_text(json.dumps({
+            "max_results_per_filter": per_filter,
+            "max_new_people_per_run": per_run,
+            "pdl_filters": pdl or [],
+            "coresignal_filters": coresignal or [],
+        }))
+        return path
+
+    def _expander(self, providers, filters_file, **budget_overrides) -> ProviderExpander:
+        enricher = ProviderEnricher(providers, self.signals, self.cache, self.budget(**budget_overrides))
+        return ProviderExpander(
+            providers, self.persons, self.identities, enricher,
+            self.budget(**budget_overrides), filters_file,
+        )
+
 
 class EnrichmentChainTests(ChainTestBase):
     def test_cache_prevents_repeat_calls_within_ttl(self):
@@ -233,23 +251,6 @@ class EnrichmentChainTests(ChainTestBase):
 
 
 class ProviderSearchTests(ChainTestBase):
-    def _filters_file(self, pdl=None, coresignal=None, per_filter=10, per_run=25) -> Path:
-        path = Path(self.temp_dir.name) / "filters.json"
-        path.write_text(json.dumps({
-            "max_results_per_filter": per_filter,
-            "max_new_people_per_run": per_run,
-            "pdl_filters": pdl or [],
-            "coresignal_filters": coresignal or [],
-        }))
-        return path
-
-    def _expander(self, providers, filters_file, **budget_overrides) -> ProviderExpander:
-        enricher = ProviderEnricher(providers, self.signals, self.cache, self.budget(**budget_overrides))
-        return ProviderExpander(
-            providers, self.persons, self.identities, enricher,
-            self.budget(**budget_overrides), filters_file,
-        )
-
     def test_sqlite_workers_do_not_share_connection(self):
         barrier = threading.Barrier(3)
 
@@ -422,6 +423,230 @@ class ProviderSearchTests(ChainTestBase):
             ),
             0,
         )
+
+
+class RecipeTests(ChainTestBase):
+    """DiscoveryRecipe layered on ProviderExpander.run_recipe: same engine,
+    same dedupe ladder, same ProviderBudget ledger as expand()."""
+
+    def _founder_recipe(self, **overrides) -> DiscoveryRecipe:
+        base = dict(
+            id="young_founders", name="Young founders", provider="pdl",
+            query_type="founder", filters={"title": ["founder", "co-founder"]},
+            default_limit=10, approval_state="approved",
+        )
+        base.update(overrides)
+        return DiscoveryRecipe(**base)
+
+    def test_recipe_run_requires_approval(self):
+        pdl = FakeProvider("pdl", search_results=[make_result("pdl", "p1")])
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe(approval_state="pending")
+
+        with self.assertRaises(PermissionError):
+            expander.run_recipe(recipe)
+        self.assertEqual(pdl.search_calls, 0)
+
+    def test_recipe_run_requires_approval_even_when_provider_unconfigured(self):
+        # No matching provider registered (e.g. PDL_API_KEY unset) — approval
+        # must still be checked before the provider lookup short-circuits.
+        expander = self._expander([], self._filters_file())
+        recipe = self._founder_recipe(approval_state="pending")
+
+        with self.assertRaises(PermissionError):
+            expander.run_recipe(recipe)
+
+    def test_recipe_dry_run_allowed_without_approval_and_spends_nothing(self):
+        pdl = FakeProvider("pdl", search_results=[make_result("pdl", "p1")])
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe(approval_state="pending")
+
+        result = expander.run_recipe(recipe, dry_run=True)
+        self.assertEqual(result.created, [])
+        self.assertEqual(pdl.search_calls, 0)  # never calls the provider
+        self.assertEqual(len(self.persons.all("discovery")), 0)
+        self.assertEqual(
+            self.usage.count_for("pdl", datetime.now(timezone.utc).date().isoformat()), 0
+        )
+
+    def test_founder_admission_admits_without_technical_education(self):
+        # MBA, not a technical field — would fail the default admission gate.
+        record = make_result("pdl", "p1", name="Priya Founder", school="Booth School of Business")
+        record.education[0].field_of_study = "MBA"
+        record.education[0].degree = "MBA"
+        pdl = FakeProvider("pdl", search_results=[record])
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe(query_type="founder")
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(len(result.created), 1)
+        person = result.created[0]
+        self.assertEqual(person.discovery_source, "pdl_discovery")
+        self.assertEqual(person.discovery_origin, "provider_search")
+        self.assertEqual(pdl.enrich_calls, 0)  # search result stored directly, never re-enriched
+
+    def test_student_technical_admission_rejects_same_record_without_technical_education(self):
+        record = make_result("pdl", "p1", name="Priya Founder", school="Booth School of Business")
+        record.education[0].field_of_study = "MBA"
+        record.education[0].degree = "MBA"
+        pdl = FakeProvider("pdl", search_results=[record])
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe(query_type="student_technical")
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(len(result.created), 0)
+        self.assertEqual(result.rejected, 1)
+        self.assertIn("nontechnical_or_missing_education", result.rejection_reasons)
+
+    def test_relative_filters_computed_at_run_time(self):
+        class CapturingProvider(FakeProvider):
+            def search_page(self, filters, size=10, cursor=None):
+                self.received_filters = filters
+                return super().search_page(filters, size=size, cursor=cursor)
+
+        pdl = CapturingProvider("pdl", search_results=[make_result("pdl", "p1")])
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe(
+            filters={"title": ["founder"]}, relative_filters={"job_start_date_gte": 30},
+        )
+
+        expander.run_recipe(recipe)
+        expected = (datetime.now(timezone.utc).date() - timedelta(days=30)).isoformat()
+        self.assertEqual(pdl.received_filters.get("job_start_date_gte"), expected)
+
+    def test_recipe_dedupes_against_existing_github_candidate_by_name_and_school(self):
+        self.save_person(
+            name="Katie Bouman", github_username="kbouman",
+            school="Massachusetts Institute of Technology",
+        )
+        record = make_result("pdl", "p1", name="Katie Bouman")
+        pdl = FakeProvider("pdl", search_results=[record])
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe()
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(len(result.created), 0)
+        self.assertEqual(result.merged, 1)
+        self.assertEqual(len(self.persons.all("discovery")), 1)  # never duplicated
+
+    def test_recipe_hard_caps_results_at_default_limit(self):
+        names = ["Ada Lovelace", "Grace Hopper", "Katie Bouman", "Radia Perlman", "Margaret Hamilton"]
+        records = [make_result("pdl", f"p{i}", name=name,
+                                linkedin=f"https://linkedin.com/in/{name.split()[1].lower()}")
+                   for i, name in enumerate(names)]
+        pdl = FakeProvider("pdl", search_results=records)
+        expander = self._expander([pdl], self._filters_file())
+        recipe = self._founder_recipe(default_limit=3)
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(len(result.created), 3)
+
+    def test_recipe_budget_exhausted_blocks_real_run(self):
+        pdl = FakeProvider("pdl", search_results=[make_result("pdl", "p1")])
+        expander = self._expander([pdl], self._filters_file(), pdl_monthly_cap=0)
+        recipe = self._founder_recipe()
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(result.created, [])
+        self.assertEqual(pdl.search_calls, 0)
+
+
+class FakeCompanyFirstProvider(FakeProvider):
+    """FakeProvider extended with the company-first methods."""
+
+    def __init__(self, name, companies, employees_by_company):
+        super().__init__(name)
+        self.companies = companies
+        self.employees_by_company = employees_by_company
+        self.company_search_calls = 0
+        self.employee_search_calls = []
+
+    def search_companies(self, filters, size=10):
+        self.company_search_calls += 1
+        return list(self.companies[:size])
+
+    def search_company_employees(self, company_id, title_filters, size=10):
+        self.employee_search_calls.append(company_id)
+        return list(self.employees_by_company.get(company_id, [])[:size])
+
+
+class CompanyFirstRecipeTests(ChainTestBase):
+    def _recipe(self, **overrides) -> DiscoveryRecipe:
+        base = dict(
+            id="seed_stage_company_first", name="Seed-stage company-first",
+            provider="coresignal", query_type="company_first",
+            filters={
+                "company": {"founded_gte": 2024, "employees_count_lte": 10},
+                "employee_title": {"title": "Founder"},
+            },
+            default_limit=10, approval_state="approved",
+        )
+        base.update(overrides)
+        return DiscoveryRecipe(**base)
+
+    def test_company_first_creates_candidates_via_shared_ingest(self):
+        companies = [{"id": "c1", "name": "Seed Co", "employees_count": 5}]
+        employees = {
+            "c1": [make_result("coresignal", "e1", name="Ada Lovelace",
+                                linkedin="https://linkedin.com/in/ada")],
+        }
+        provider = FakeCompanyFirstProvider("coresignal", companies, employees)
+        expander = self._expander([provider], self._filters_file())
+        recipe = self._recipe()
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(len(result.created), 1)
+        self.assertEqual(result.created[0].discovery_source, "coresignal_discovery")
+        self.assertEqual(provider.company_search_calls, 1)
+        self.assertEqual(provider.employee_search_calls, ["c1"])
+
+    def test_company_first_dry_run_spends_nothing(self):
+        companies = [{"id": "c1", "name": "Seed Co", "employees_count": 5}]
+        employees = {"c1": [make_result("coresignal", "e1", name="Ada Lovelace")]}
+        provider = FakeCompanyFirstProvider("coresignal", companies, employees)
+        expander = self._expander([provider], self._filters_file())
+        recipe = self._recipe()
+
+        result = expander.run_recipe(recipe, dry_run=True)
+        self.assertEqual(result.created, [])
+        self.assertEqual(provider.employee_search_calls, [])  # step 2 never runs
+        self.assertEqual(
+            self.usage.count_for("coresignal", datetime.now(timezone.utc).date().isoformat()), 0
+        )
+
+    def test_company_first_requires_approval(self):
+        provider = FakeCompanyFirstProvider("coresignal", [], {})
+        expander = self._expander([provider], self._filters_file())
+        recipe = self._recipe(approval_state="pending")
+
+        with self.assertRaises(PermissionError):
+            expander.run_recipe(recipe)
+
+    def test_company_first_dedupes_across_companies(self):
+        companies = [{"id": "c1"}, {"id": "c2"}]
+        shared = make_result("coresignal", "e1", name="Ada Lovelace",
+                              linkedin="https://linkedin.com/in/ada")
+        employees = {"c1": [shared], "c2": [shared]}
+        provider = FakeCompanyFirstProvider("coresignal", companies, employees)
+        expander = self._expander([provider], self._filters_file())
+        recipe = self._recipe()
+
+        result = expander.run_recipe(recipe)
+        self.assertEqual(len(result.created), 1)
+        self.assertEqual(result.duplicates, 1)
+
+    def test_search_and_collect_credits_tracked_separately(self):
+        companies = [{"id": "c1"}]
+        employees = {"c1": [make_result("coresignal", "e1", name="Ada Lovelace")]}
+        provider = FakeCompanyFirstProvider("coresignal", companies, employees)
+        expander = self._expander([provider], self._filters_file())
+        recipe = self._recipe()
+
+        expander.run_recipe(recipe)
+        checkpoint = expander.recipe_checkpoint(recipe)
+        self.assertIsNotNone(checkpoint)
+        self.assertGreater(checkpoint.search_credit_units, 0)
+        self.assertGreater(checkpoint.collect_credit_units, 0)
 
 
 class EnrichmentQueueTests(ChainTestBase):
@@ -615,7 +840,27 @@ class AdapterHttpMockTests(unittest.TestCase):
         self.assertIsNone(provider.enrich_person(_query()))
         self.assertEqual(provider.last_error, "HTTP 401")  # auth error, must not cache
 
-    def test_pdl_search_page_uses_persistable_offset(self):
+    def test_pdl_search_page_first_request_omits_scroll_token(self):
+        session = _DummySession()
+        session.post_response = _Resp(200, {
+            "data": [{
+                "id": "PDL-1",
+                "full_name": "Page One",
+                "linkedin_url": "linkedin.com/in/page-one",
+            }],
+            "scroll_token": "tok-1",
+        })
+        provider = PdlProvider("k", session=session)
+
+        page = provider.search_page({"school": "MIT"}, size=1, cursor=None)
+
+        self.assertNotIn("scroll_token", session.last_post_json)
+        self.assertNotIn("from", session.last_post_json)  # PDL v5 deprecated `from`
+        self.assertEqual(page.returned_records, 1)
+        self.assertEqual(page.next_cursor, "tok-1")  # more pages: records == size and a token came back
+        self.assertFalse(page.exhausted)
+
+    def test_pdl_search_page_resumes_with_scroll_token(self):
         session = _DummySession()
         session.post_response = _Resp(200, {
             "data": [{
@@ -623,16 +868,16 @@ class AdapterHttpMockTests(unittest.TestCase):
                 "full_name": "Page Eleven",
                 "linkedin_url": "linkedin.com/in/page-eleven",
             }],
-            "total": 11,
+            "scroll_token": None,
         })
         provider = PdlProvider("k", session=session)
 
-        page = provider.search_page({"school": "MIT"}, size=10, cursor="10")
+        page = provider.search_page({"school": "MIT"}, size=10, cursor="tok-1")
 
-        self.assertEqual(session.last_post_json["from"], 10)
+        self.assertEqual(session.last_post_json["scroll_token"], "tok-1")
         self.assertEqual(page.returned_records, 1)
         self.assertEqual(page.credit_units, 1)
-        self.assertTrue(page.exhausted)
+        self.assertTrue(page.exhausted)  # fewer records than size and no scroll_token
 
     def test_coresignal_search_page_offsets_collects_and_counts_requests(self):
         session = _DummySession()

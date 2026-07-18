@@ -6,6 +6,7 @@ from backend.db.database import Database
 from backend.db.repositories.candidate_reviews import CandidateReviewRepository
 from backend.db.repositories.concentrations import ConcentrationRepository
 from backend.db.repositories.digests import DigestRepository
+from backend.db.repositories.discovery_recipes import DiscoveryRecipeRepository
 from backend.db.repositories.enrichment import EnrichmentCacheRepository, EnrichmentUsageRepository
 from backend.db.repositories.graph_edges import GraphEdgeRepository
 from backend.db.repositories.page_views import PageViewRepository
@@ -23,17 +24,22 @@ from backend.discovery.concentrations import ConcentrationDetector
 from backend.discovery.entity_resolution import EntityResolver
 from backend.discovery.openalex_labs import OpenAlexLabExpander
 from backend.discovery.provider_expansion import ProviderExpander
+from backend.discovery.recipe_seeds import INITIAL_RECIPES
 from backend.enrichment.budgets import ProviderBudget
 from backend.enrichment.contacts import ContactEnricher
 from backend.enrichment.locations import LocationResolver
 from backend.enrichment.provider_enricher import ProviderEnricher, build_provider_chain
 from backend.scoring.backtest import BacktestRunner
 from backend.scoring.engine import ScoringEngine
+from backend.scrapers.competition_scraper import CompetitionScraper
+from backend.scrapers.fellowship_scraper import FellowshipScraper
 from backend.scrapers.openalex import OpenAlexClient, OpenAlexScraper
+from backend.scrapers.resolve import LeadResolver
 from backend.security.email_actions import EmailActionSigner
 from backend.services.candidate_service import CandidateService
 from backend.services.candidate_review import CandidateReviewService
 from backend.services.discovery_job import DiscoveryJobManager
+from backend.services.discovery_recipe_service import DiscoveryRecipeService
 from backend.services.subscriber_digest import SubscriberDigestService
 
 
@@ -71,6 +77,17 @@ class Container:
             self.provider_chain, self.persons, self.provider_identities,
             self.provider_enricher, self.provider_budget,
             self.settings.provider_discovery_filters_file,
+        )
+        self.fellowship_scraper = FellowshipScraper(self.settings.fellowship_sources_file)
+        self.competition_scraper = CompetitionScraper(self.settings.competition_sources_file)
+        self.lead_resolver = LeadResolver(
+            self.persons, self.provider_identities, self.provider_enricher,
+        )
+        self.discovery_recipes = DiscoveryRecipeRepository(self.db)
+        self.discovery_recipes.seed(INITIAL_RECIPES)
+        self.discovery_recipe_service = DiscoveryRecipeService(
+            self.discovery_recipes, self.provider_identities, self.provider_expander,
+            self.provider_budget, self.enrichment_usage, self.persons,
         )
         self.openalex_client = OpenAlexClient(mailto=self.settings.openalex_mailto)
         self.openalex_scraper = OpenAlexScraper(self.openalex_client)

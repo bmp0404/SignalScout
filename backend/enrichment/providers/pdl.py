@@ -42,9 +42,14 @@ SEARCH_COLUMNS = {
     "title_role": "job_title_role",
     "title_level": "job_title_levels",
     "industry": "industry",
+    "title": "job_title",  # free-text title match, e.g. founder/co-founder/ceo
+    "company_size": "job_company_size",  # PDL bucket, e.g. "1-10"
+    "skill": "skills",
 }
 SEARCH_RANGE_COLUMNS = {
     "education_end_date_gte": ("education.end_date", ">="),
+    "birth_year_gte": ("birth_year", ">="),
+    "job_start_date_gte": ("job_start_date", ">="),
 }
 MAX_SEARCH_SIZE = 100
 
@@ -99,21 +104,20 @@ class PdlProvider(EnrichmentProvider):
     ) -> ProviderSearchPage:
         """Person Search via SQL. `filters` keys are ALLOWLISTED (SEARCH_COLUMNS);
         unknown keys are ignored and values are escaped — never interpolated as
-        arbitrary column references. PDL uses its documented ``from`` offset."""
+        arbitrary column references. PDL v5 deprecated the ``from`` offset in
+        favor of scroll_token-based pagination: the first request omits it, the
+        response's `scroll_token` is echoed back verbatim as `cursor` to resume."""
         self.last_error = None
         where = self._build_where(filters)
         if not where:
             return ProviderSearchPage()
-        try:
-            offset = max(0, int(cursor or 0))
-        except (TypeError, ValueError):
-            offset = 0
         limit = max(1, min(size, MAX_SEARCH_SIZE))
         body = {
             "sql": f"SELECT * FROM person WHERE {where}",
             "size": limit,
-            "from": offset,
         }
+        if cursor:
+            body["scroll_token"] = cursor
         try:
             resp = self.session.post(f"{API}/person/search", json=body, timeout=20)
             if resp.status_code == 404:
@@ -125,15 +129,11 @@ class PdlProvider(EnrichmentProvider):
             payload = resp.json()
             records = payload.get("data", [])
             results = [self._map_person(rec) for rec in records]
-            total = payload.get("total")
-            has_more = (
-                offset + len(records) < total
-                if isinstance(total, int)
-                else len(records) == limit
-            )
+            scroll_token = payload.get("scroll_token")
+            has_more = bool(scroll_token) and len(records) == limit
             return ProviderSearchPage(
                 results=results,
-                next_cursor=str(offset + len(records)) if has_more else None,
+                next_cursor=scroll_token if has_more else None,
                 exhausted=not has_more,
                 api_requests=1,
                 returned_records=len(records),

@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS provider_search_checkpoints (
     duplicate_count INTEGER NOT NULL DEFAULT 0,
     rejected_count INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
+    search_credit_units INTEGER NOT NULL DEFAULT 0,
+    collect_credit_units INTEGER NOT NULL DEFAULT 0,
     rejection_reasons TEXT NOT NULL DEFAULT '{}',
     last_outcome TEXT NOT NULL DEFAULT 'never_run',
     updated_at TEXT NOT NULL,
@@ -65,6 +67,8 @@ class ProviderSearchCheckpoint:
     duplicate_count: int = 0
     rejected_count: int = 0
     error_count: int = 0
+    search_credit_units: int = 0
+    collect_credit_units: int = 0
     rejection_reasons: dict[str, int] = field(default_factory=dict)
     last_outcome: str = "never_run"
     updated_at: str = ""
@@ -149,6 +153,8 @@ class ProviderIdentityRepository(BaseRepository):
             duplicate_count=row["duplicate_count"],
             rejected_count=row["rejected_count"],
             error_count=row["error_count"],
+            search_credit_units=row["search_credit_units"],
+            collect_credit_units=row["collect_credit_units"],
             rejection_reasons=self.loads(row["rejection_reasons"], {}),
             last_outcome=row["last_outcome"],
             updated_at=row["updated_at"],
@@ -168,6 +174,8 @@ class ProviderIdentityRepository(BaseRepository):
         last_outcome: str,
         updated_at: str,
         advance: bool = True,
+        search_credit_units: int = 0,
+        collect_credit_units: int = 0,
     ) -> ProviderSearchCheckpoint:
         reasons = dict(checkpoint.rejection_reasons)
         for reason, count in rejection_reasons.items():
@@ -189,6 +197,8 @@ class ProviderIdentityRepository(BaseRepository):
             duplicate_count=checkpoint.duplicate_count + outcomes.get("duplicate", 0),
             rejected_count=checkpoint.rejected_count + outcomes.get("rejected", 0),
             error_count=checkpoint.error_count + int(last_outcome.startswith("error:")),
+            search_credit_units=checkpoint.search_credit_units + search_credit_units,
+            collect_credit_units=checkpoint.collect_credit_units + collect_credit_units,
             rejection_reasons=reasons,
             last_outcome=last_outcome,
             updated_at=updated_at,
@@ -198,8 +208,9 @@ class ProviderIdentityRepository(BaseRepository):
                (provider, filter_identity, filters_json, cursor, next_page, exhausted,
                 requested_pages, api_requests, returned_records, credit_units,
                 verified_count, review_count, merged_count, duplicate_count,
-                rejected_count, error_count, rejection_reasons, last_outcome, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rejected_count, error_count, search_credit_units, collect_credit_units,
+                rejection_reasons, last_outcome, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 updated.provider,
                 updated.filter_identity,
@@ -217,6 +228,8 @@ class ProviderIdentityRepository(BaseRepository):
                 updated.duplicate_count,
                 updated.rejected_count,
                 updated.error_count,
+                updated.search_credit_units,
+                updated.collect_credit_units,
                 self.dumps(updated.rejection_reasons),
                 updated.last_outcome,
                 updated.updated_at,
@@ -236,11 +249,18 @@ class ProviderIdentityRepository(BaseRepository):
             rows = self.conn.execute(
                 "PRAGMA table_info(provider_search_checkpoints)"
             ).fetchall()
-        if "error_count" not in {row["name"] for row in rows}:
+        existing = {row["name"] for row in rows}
+        for column, definition in (
+            ("error_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("search_credit_units", "INTEGER NOT NULL DEFAULT 0"),
+            ("collect_credit_units", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column in existing:
+                continue
             statement = (
                 "ALTER TABLE provider_search_checkpoints "
                 + ("ADD COLUMN IF NOT EXISTS " if self.db.backend == "postgres" else "ADD COLUMN ")
-                + "error_count INTEGER NOT NULL DEFAULT 0"
+                + f"{column} {definition}"
             )
             try:
                 self.conn.execute(statement)

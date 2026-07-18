@@ -1,5 +1,18 @@
-async function request(path, options) {
-  const resp = await fetch(path, options);
+let operatorToken = '';
+
+// Operator-only pages (Discovery Admin) call this once the operator enters
+// their secret; every request below then carries it automatically.
+export function setOperatorToken(token) {
+  operatorToken = token || '';
+}
+
+function authHeaders() {
+  return operatorToken ? { Authorization: `Bearer ${operatorToken}` } : {};
+}
+
+async function request(path, options = {}) {
+  const headers = { ...authHeaders(), ...(options.headers || {}) };
+  const resp = await fetch(path, { ...options, headers });
   if (!resp.ok) {
     let detail = `${resp.status} ${resp.statusText}`;
     try {
@@ -41,4 +54,15 @@ export const api = {
   }),
   runDiscovery: () => request('/api/discovery/run', { method: 'POST' }),
   discoveryStatus: () => request('/api/discovery/status'),
+  discoveryRecipes: () => request('/api/discovery/recipes'),
+  runRecipe: (id, limit) => request(
+    `/api/discovery/recipes/${id}/run${limit ? `?limit=${limit}` : ''}`,
+    { method: 'POST' },
+  ),
+  dryRunRecipe: (id, limit) => request(
+    `/api/discovery/recipes/${id}/dry-run${limit ? `?limit=${limit}` : ''}`,
+    { method: 'POST' },
+  ),
+  approveRecipe: (id) => request(`/api/discovery/recipes/${id}/approve`, { method: 'POST' }),
+  discoveryCostSummary: () => request('/api/discovery/cost-summary'),
 };
