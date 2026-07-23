@@ -47,6 +47,12 @@ Runs the due-subscriber digest job for a Railway cron service, sending live emai
 - `main() -> None` — calls `container.subscriber_digest.run_due(dry_run=False)` and prints subscriber/sent counts.
 - No CLI args. Sends real emails to due subscribers — not idempotent/safe to spam-run since each due subscriber gets a delivery per invocation (though the digest layer prevents re-sending the same candidate).
 
+## scripts/run_discovery_cron.py
+Runs every due discovery recipe for a Railway cron service (or a local one-shot). Honors each recipe's weekly/biweekly cadence via `DiscoveryRecipeService.run_due()`.
+
+- `main() -> None` — calls `container.discovery_recipe_service.run_due()` and prints due/ran/error/created counts.
+- No CLI args. Safe to invoke daily: recipes that are not due are skipped. Still spends provider credits for recipes that *are* due and whose provider key is configured.
+
 ## scripts/run_digest.py
 Regenerates the digest from the current live discovery cohort and persists it (writes `out/digest-<date>.html`).
 

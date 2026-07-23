@@ -80,9 +80,19 @@ class Settings:
     public_base_url: str = field(default_factory=lambda: os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000"))
     cron_secret: str = field(default_factory=lambda: os.environ.get("CRON_SECRET", ""))
 
-    # Server-side bearer gate for review, preview, and cost-incurring operator actions.
+    # Background discovery: periodically runs due recipes without a manual Pipeline click.
+    # Disable with DISCOVERY_BACKGROUND=0 (e.g. tests). Interval is a tick frequency;
+    # each recipe still only spends when its own weekly/biweekly window is due.
+    discovery_background: bool = field(
+        default_factory=lambda: os.environ.get("DISCOVERY_BACKGROUND", "1").lower()
+        in ("1", "true", "yes")
+    )
+    discovery_background_interval_hours: int = field(
+        default_factory=lambda: int(os.environ.get("DISCOVERY_BACKGROUND_INTERVAL_HOURS", "6"))
+    )
+
+    # APP_ENV gates production-only restrictions (e.g. owner test-digest email).
     environment: str = field(default_factory=lambda: os.environ.get("APP_ENV", "development"))
-    admin_secret: str = field(default_factory=lambda: os.environ.get("ADMIN_SECRET", ""))
     owner_test_email: str = field(default_factory=lambda: os.environ.get("OWNER_TEST_EMAIL", ""))
 
     @property
@@ -90,8 +100,8 @@ class Settings:
         return self.environment.strip().lower() in {"production", "prod"}
 
     def validate_security(self) -> None:
-        if self.is_production and not (self.admin_secret or self.cron_secret):
-            raise RuntimeError("Production requires ADMIN_SECRET or CRON_SECRET.")
+        if self.is_production and not self.cron_secret:
+            raise RuntimeError("Production requires CRON_SECRET.")
 
 
 def load_settings() -> Settings:

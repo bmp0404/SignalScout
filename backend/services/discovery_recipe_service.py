@@ -5,7 +5,7 @@ ProviderExpander/ProviderBudget/provider_search_checkpoints. This service adds
 no parallel dedupe ledger or budget table.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.db.repositories.discovery_recipes import DiscoveryRecipeRepository
 from backend.db.repositories.enrichment import EnrichmentUsageRepository
@@ -14,6 +14,11 @@ from backend.db.repositories.provider_identities import ProviderIdentityReposito
 from backend.discovery.provider_expansion import ProviderExpander
 from backend.domain.discovery_recipe import DiscoveryRecipe
 from backend.enrichment.budgets import SEARCH, ProviderBudget
+
+FREQUENCY_INTERVALS = {
+    "weekly": timedelta(days=7),
+    "biweekly": timedelta(days=14),
+}
 
 
 class DiscoveryRecipeService:
@@ -25,6 +30,7 @@ class DiscoveryRecipeService:
         budget: ProviderBudget,
         usage: EnrichmentUsageRepository,
         persons: PersonRepository,
+        candidate_service=None,
     ):
         self.recipes = recipes
         self.identities = identities
@@ -32,6 +38,7 @@ class DiscoveryRecipeService:
         self.budget = budget
         self.usage = usage
         self.persons = persons
+        self.candidate_service = candidate_service
 
     def list_recipes(self) -> list[dict]:
         return [self._recipe_row(recipe) for recipe in self.recipes.all()]
@@ -46,6 +53,54 @@ class DiscoveryRecipeService:
 
     def dry_run(self, recipe_id: str, override_limit: int | None = None) -> dict:
         return self._run(recipe_id, dry_run=True, override_limit=override_limit)
+
+    def is_due(self, recipe: DiscoveryRecipe, now: datetime | None = None) -> bool:
+        """True when an active, approved, non-manual recipe's interval has elapsed."""
+        if recipe.status != "active":
+            return False
+        if recipe.approval_state != "approved":
+            return False
+        interval = FREQUENCY_INTERVALS.get(recipe.frequency)
+        if interval is None:
+            return False
+        run_at = now or datetime.now(timezone.utc)
+        if not recipe.last_run:
+            return True
+        try:
+            last = datetime.fromisoformat(recipe.last_run)
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        return run_at - last >= interval
+
+    def run_due(self, now: datetime | None = None) -> dict:
+        """Run every due recipe (active + approved + frequency elapsed). Skips failures."""
+        run_at = now or datetime.now(timezone.utc)
+        due = [recipe for recipe in self.recipes.all() if self.is_due(recipe, run_at)]
+        results = []
+        created_total = 0
+        for recipe in due:
+            try:
+                summary = self._run(recipe.id, dry_run=False, override_limit=None)
+                results.append({"recipe_id": recipe.id, "status": "ran", **summary})
+                created_total += int(summary.get("created") or 0)
+            except Exception as exc:  # noqa: BLE001 — cron must continue across recipes
+                results.append({
+                    "recipe_id": recipe.id,
+                    "status": "error",
+                    "error": str(exc),
+                })
+        if created_total and self.candidate_service is not None:
+            self.candidate_service.rescore_all()
+        return {
+            "run_at": run_at.isoformat(timespec="seconds"),
+            "due_count": len(due),
+            "ran_count": sum(1 for row in results if row["status"] == "ran"),
+            "error_count": sum(1 for row in results if row["status"] == "error"),
+            "created_total": created_total,
+            "results": results,
+        }
 
     def cost_summary(self) -> dict:
         today = datetime.now(timezone.utc).date()
@@ -137,6 +192,7 @@ class DiscoveryRecipeService:
             "last_duplicate_count": checkpoint.duplicate_count if checkpoint else 0,
             "last_credit_units": checkpoint.credit_units if checkpoint else 0,
             "last_outcome": checkpoint.last_outcome if checkpoint else "never_run",
+            "due": self.is_due(recipe),
         }
 
     def _get(self, recipe_id: str) -> DiscoveryRecipe:

@@ -87,6 +87,7 @@ class Container:
         )
         self.discovery_recipes = DiscoveryRecipeRepository(self.db)
         self.discovery_recipes.seed(INITIAL_RECIPES)
+        self.discovery_recipes.approve_pending_seeds({recipe.id for recipe in INITIAL_RECIPES})
         self.discovery_recipe_service = DiscoveryRecipeService(
             self.discovery_recipes, self.provider_identities, self.provider_expander,
             self.provider_budget, self.enrichment_usage, self.persons,
@@ -105,6 +106,7 @@ class Container:
             self.settings.flag_threshold,
             self.candidate_reviews,
         )
+        self.discovery_recipe_service.candidate_service = self.candidate_service
         self.candidate_review_service = CandidateReviewService(
             self.candidate_reviews,
             self.persons,
@@ -122,7 +124,7 @@ class Container:
             self.settings.digest_from_email,
         )
         self.email_action_signer = EmailActionSigner(
-            self.settings.admin_secret or self.settings.cron_secret
+            self.settings.cron_secret
         )
         self.subscriber_digest = SubscriberDigestService(
             self.subscribers,

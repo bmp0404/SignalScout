@@ -20,7 +20,6 @@ class PublicReleaseSecurityTests(unittest.TestCase):
             database_url="",
             out_dir=Path(self.temp_dir.name) / "out",
             environment="production",
-            admin_secret="test-admin-secret",
             cron_secret="test-cron-secret",
             public_base_url="https://testserver",
         )
@@ -28,26 +27,33 @@ class PublicReleaseSecurityTests(unittest.TestCase):
         app = FastAPI()
         app.include_router(build_router(self.container))
         self.client = TestClient(app)
-        self.admin_headers = {"Authorization": "Bearer test-admin-secret"}
 
     def tearDown(self):
         self.container.db.close()
         self.temp_dir.cleanup()
 
-    def test_candidate_browsing_is_public_but_operator_routes_are_gated(self):
+    def test_candidate_and_operator_routes_are_open(self):
         self.assertEqual(self.client.get("/api/candidates").status_code, 200)
         self.assertEqual(self.client.get("/api/overview").status_code, 200)
         for method, path in (
-            ("post", "/api/discovery/run"),
             ("get", "/api/discovery/status"),
-            ("get", "/api/digest/preview"),
             ("get", "/api/candidate-reviews"),
-            ("post", "/api/digests/generate"),
+            ("get", "/api/discovery/recipes"),
+            ("get", "/api/discovery/cost-summary"),
         ):
             response = getattr(self.client, method)(path)
-            self.assertEqual(response.status_code, 401, path)
+            self.assertEqual(response.status_code, 200, path)
 
-    def test_admin_bearer_allows_preview_without_recording_send(self):
+    def test_cron_route_still_requires_secret(self):
+        unauthorized = self.client.post("/api/digest/cron")
+        self.assertEqual(unauthorized.status_code, 401)
+        authorized = self.client.post(
+            "/api/digest/cron",
+            headers={"Authorization": "Bearer test-cron-secret"},
+        )
+        self.assertEqual(authorized.status_code, 200)
+
+    def test_preview_works_without_bearer(self):
         person = Person(
             name="Reviewed Candidate",
             cohort="discovery",
@@ -68,28 +74,36 @@ class PublicReleaseSecurityTests(unittest.TestCase):
                 summary="Won a documented public competition.",
             )
         )
-        self.container.candidate_review_service.review(
-            person.id,
-            "approved",
-            why_now="Won a documented public competition while shipping a public project.",
-            source_bucket="manual_public",
-            contactable=True,
-            primary_evidence_url="https://example.com/evidence",
-            reviewer="test",
-        )
+        self.container.candidate_review_service.review(person.id, "approved")
         subscriber = self.container.subscribers.subscribe(
             "owner@example.com", "weekly", {}
         )
-        response = self.client.get(
-            "/api/digest/preview?email=owner@example.com",
-            headers=self.admin_headers,
-        )
+        response = self.client.get("/api/digest/preview?email=owner@example.com")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             [candidate["id"] for candidate in response.json()["candidates"]],
             [person.id],
         )
         self.assertEqual(self.container.digest_sends.sent_person_ids(subscriber.id), set())
+
+    def test_one_click_approve_updates_state(self):
+        person = Person(
+            name="Quick Approve",
+            cohort="discovery",
+            score=40,
+            github_username="quick",
+        )
+        self.container.persons.save(person)
+        response = self.client.put(
+            f"/api/candidate-reviews/{person.id}",
+            json={"state": "approved"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "approved")
+        listed = self.client.get("/api/candidates?cohort=discovery")
+        self.assertEqual(listed.status_code, 200)
+        match = next(c for c in listed.json()["candidates"] if c["id"] == person.id)
+        self.assertEqual(match["approval_state"], "approved")
 
     def test_public_signup_does_not_expose_action_token(self):
         response = self.client.post(
@@ -99,14 +113,13 @@ class PublicReleaseSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("subscriber_token", response.json())
 
-    def test_production_operator_configuration_fails_closed(self):
-        with self.assertRaisesRegex(RuntimeError, "ADMIN_SECRET"):
+    def test_production_requires_cron_secret(self):
+        with self.assertRaisesRegex(RuntimeError, "CRON_SECRET"):
             Container(
                 Settings(
                     db_path=Path(self.temp_dir.name) / "bad.db",
                     database_url="",
                     environment="production",
-                    admin_secret="",
                     cron_secret="",
                 )
             )

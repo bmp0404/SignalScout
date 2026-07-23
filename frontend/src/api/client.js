@@ -1,17 +1,5 @@
-let operatorToken = '';
-
-// Operator-only pages (Discovery Admin) call this once the operator enters
-// their secret; every request below then carries it automatically.
-export function setOperatorToken(token) {
-  operatorToken = token || '';
-}
-
-function authHeaders() {
-  return operatorToken ? { Authorization: `Bearer ${operatorToken}` } : {};
-}
-
 async function request(path, options = {}) {
-  const headers = { ...authHeaders(), ...(options.headers || {}) };
+  const headers = { ...(options.headers || {}) };
   const resp = await fetch(path, { ...options, headers });
   if (!resp.ok) {
     let detail = `${resp.status} ${resp.statusText}`;
@@ -65,4 +53,9 @@ export const api = {
   ),
   approveRecipe: (id) => request(`/api/discovery/recipes/${id}/approve`, { method: 'POST' }),
   discoveryCostSummary: () => request('/api/discovery/cost-summary'),
+  reviewCandidate: (id, payload) => request(`/api/candidate-reviews/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
 };

@@ -49,7 +49,6 @@ class Phase4DigestTests(unittest.TestCase):
             out_dir=root / "out",
             public_base_url="https://signals.example",
             cron_secret="test-secret",
-            admin_secret="test-admin-secret",
             resend_api_key="",
             digest_from_email="",
         )

@@ -20,6 +20,7 @@ PDL_RECIPES = [
         },
         default_limit=25,
         frequency="weekly",
+        approval_state="approved",
     ),
     DiscoveryRecipe(
         id="recent_founder_starts",
@@ -33,6 +34,7 @@ PDL_RECIPES = [
         relative_filters={"job_start_date_gte": 30},
         default_limit=25,
         frequency="weekly",
+        approval_state="approved",
     ),
     DiscoveryRecipe(
         id="top_school_technical",
@@ -54,6 +56,7 @@ PDL_RECIPES = [
         },
         default_limit=25,
         frequency="biweekly",
+        approval_state="approved",
     ),
 ]
 
@@ -70,6 +73,7 @@ CORESIGNAL_RECIPES = [
         },
         default_limit=20,
         frequency="weekly",
+        approval_state="approved",
     ),
     DiscoveryRecipe(
         id="young_ai_founders",
@@ -84,6 +88,7 @@ CORESIGNAL_RECIPES = [
         },
         default_limit=20,
         frequency="weekly",
+        approval_state="approved",
     ),
     DiscoveryRecipe(
         id="seed_stage_company_first",
@@ -98,6 +103,7 @@ CORESIGNAL_RECIPES = [
         },
         default_limit=20,
         frequency="weekly",
+        approval_state="approved",
     ),
 ]
 

@@ -134,9 +134,19 @@ Fixture-driven tests (HTTP layer mocked, providers faked; never spend real credi
 - `test_founder_backtest_unchanged()` — regression guard asserting the founder backtest recall (`70.0%`) and false-positive rate (`1.7%`) are unchanged against the real seeded `signal_scout.db` (skipped if that DB or founders aren't present). Currently failing against the live `signal_scout.db` in this repo (`56.7%` recall) — pre-existing, unrelated to the provider-discovery work in this doc revision; confirmed present on an unmodified checkout too.
 
 ## tests/test_public_release_security.py
-Covers that candidate browsing stays public while operator/admin routes are bearer-gated, that admin preview does not record a real send, that public signup never leaks the subscriber's action token, and that production config fails closed when secrets are missing.
+Covers that product routes are open, that cron delivery still requires a bearer secret, that preview does not record a real send, that one-click approve flips `approval_state`, that public signup never leaks the subscriber's action token, and that production config fails closed without `CRON_SECRET`.
 
-- `test_candidate_browsing_is_public_but_operator_routes_are_gated()` — asserts `/api/candidates` and `/api/overview` are public (200) while discovery/digest-preview/candidate-reviews/digest-generate routes all return 401 without auth.
-- `test_admin_bearer_allows_preview_without_recording_send()` — asserts an admin-authorized `/api/digest/preview` request returns the expected approved candidate but does not record it as sent to the subscriber.
+- `test_candidate_and_operator_routes_are_open()` — asserts `/api/candidates`, `/api/overview`, discovery status/recipes/cost-summary, and candidate-reviews all return 200 without auth.
+- `test_cron_route_still_requires_secret()` — asserts `POST /api/digest/cron` returns 401 without bearer and 200 with the configured cron secret.
+- `test_preview_works_without_bearer()` — asserts `/api/digest/preview` returns the expected approved candidate but does not record it as sent to the subscriber.
+- `test_one_click_approve_updates_state()` — asserts `PUT /api/candidate-reviews/{id}` with `{state:"approved"}` persists and surfaces on `/api/candidates`.
 - `test_public_signup_does_not_expose_action_token()` — asserts `POST /api/subscribers` response never includes `subscriber_token`.
-- `test_production_operator_configuration_fails_closed()` — asserts constructing a `Container` with `environment="production"` and empty `admin_secret`/`cron_secret` raises `RuntimeError` mentioning `ADMIN_SECRET`.
+- `test_production_requires_cron_secret()` — asserts constructing a `Container` with `environment="production"` and empty `cron_secret` raises `RuntimeError` mentioning `CRON_SECRET`.
+
+## tests/test_discovery_cron.py
+Covers scheduled discovery: seed auto-approve, `is_due` cadence, `run_due` last_run bookkeeping, and the gated `/api/discovery/cron` endpoint.
+
+- `test_seed_recipes_are_auto_approved()` — asserts every seeded recipe lands as `approval_state == "approved"`.
+- `test_is_due_respects_frequency_and_last_run()` — asserts weekly due/not-due windows, and that `manual` / `paused` recipes are never due.
+- `test_run_due_marks_last_run_when_provider_missing()` — asserts `run_due` records `last_run` even when providers are unconfigured (no-op expand), and a second tick finds nothing due.
+- `test_discovery_cron_requires_secret()` — asserts `POST /api/discovery/cron` returns 401 without bearer and 200 with `CRON_SECRET`.

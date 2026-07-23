@@ -6,14 +6,12 @@ This module holds application-level orchestration classes that sit above reposit
 Empty package marker file with no exported symbols.
 
 ## backend/services/candidate_review.py
-Validation and workflow rules for the human launch-approval process on discovery candidates.
+One-click workflow rules for sorting discovery candidates into unreviewed / approved / rejected.
 
-- `_public_http_url(value)` — checks whether a string is a well-formed public http(s) URL (used to validate evidence links).
-- `CandidateReviewService` — orchestrates recording and validating human review decisions on discovery candidates, backed by `CandidateReviewRepository`, `PersonRepository`, and `SignalRepository`.
-  - `CandidateReviewService.review(person_id, state, why_now, notes, source_bucket, contactable, primary_evidence_url, reviewer) -> CandidateReview` — loads the person (must exist and be in the "discovery" cohort), runs approval validation when `state == "approved"`, then upserts the review record via the reviews repository.
+- `CandidateReviewService` — orchestrates recording review decisions on discovery candidates, backed by `CandidateReviewRepository`, `PersonRepository`, and `SignalRepository`.
+  - `CandidateReviewService.review(person_id, state, why_now, notes, source_bucket, contactable, primary_evidence_url, reviewer) -> CandidateReview` — loads the person (must exist and be in the "discovery" cohort), then upserts the review record; when `state == "approved"` and `contactable` was not set, defaults `contactable=True` so one-click approves flow into the digest.
   - `CandidateReviewService.list_rows(state=None) -> list[dict]` — fetches reviews (optionally filtered by state), joins each to its person, and returns dicts merging review fields with the person's name and display contacts.
   - `CandidateReviewService.approved_mix() -> dict[str, int]` — counts approved, contactable reviews by `source_bucket`, returned sorted by bucket name.
-  - `CandidateReviewService._validate_approval(person_id, name, why_now, source_bucket, contactable, primary_evidence_url, has_contact)` — enforces approval gating rules: a real anchored name, a why-now of 30+ characters, a valid public evidence URL that must already exist among the person's persisted signal `source_url`s, a non-empty source bucket, and at least one contact route; raises `ValueError` on any violation.
 
 ## backend/services/candidate_service.py
 Scores the live cohort and builds the payloads the UI needs — score receipts, connection context, warm-intro paths, and "why now" lines.
@@ -56,17 +54,29 @@ Scores the live cohort and builds the payloads the UI needs — score receipts, 
 ## backend/services/discovery_recipe_service.py
 `DiscoveryRecipeService` is the "recipe" discovery pipeline's API-facing orchestrator: list/run/dry-run/approve `DiscoveryRecipe`s and summarize spend. Orchestration only — every search, dedupe, and credit spend happens inside `ProviderExpander`/`ProviderBudget`/`provider_search_checkpoints` (see `discovery.md`, `enrichment.md`, `db.md`); this service adds no parallel dedupe ledger or budget table, and shares those with `DiscoveryJobManager`'s batch pipeline.
 
-- `DiscoveryRecipeService` — composes `DiscoveryRecipeRepository`, `ProviderIdentityRepository`, `ProviderExpander`, `ProviderBudget`, `EnrichmentUsageRepository`, and `PersonRepository`.
-  - `DiscoveryRecipeService.__init__(recipes, identities, expander, budget, usage, persons)` — stores the repositories/services used for listing, running, and cost reporting.
-  - `DiscoveryRecipeService.list_recipes() -> list[dict]` — returns `_recipe_row(recipe)` for every stored recipe.
+- `DiscoveryRecipeService` — composes `DiscoveryRecipeRepository`, `ProviderIdentityRepository`, `ProviderExpander`, `ProviderBudget`, `EnrichmentUsageRepository`, and `PersonRepository` (plus optional `candidate_service` for post-run rescoring).
+  - `DiscoveryRecipeService.__init__(recipes, identities, expander, budget, usage, persons, candidate_service=None)` — stores the repositories/services used for listing, running, and cost reporting.
+  - `DiscoveryRecipeService.list_recipes() -> list[dict]` — returns `_recipe_row(recipe)` for every stored recipe (includes a `due` flag).
   - `DiscoveryRecipeService.approve(recipe_id) -> dict` — sets a recipe's `approval_state` to `"approved"` (raises `ValueError` if the recipe id is unknown) and returns its updated row.
   - `DiscoveryRecipeService.run(recipe_id, override_limit=None) -> dict` — real (non-dry) recipe run; delegates to `_run`.
   - `DiscoveryRecipeService.dry_run(recipe_id, override_limit=None) -> dict` — dry-run recipe preview; delegates to `_run`.
+  - `DiscoveryRecipeService.is_due(recipe, now=None) -> bool` — true when the recipe is `active`, `approved`, has a weekly/biweekly frequency (not `manual`), and `last_run` is missing or older than the interval.
+  - `DiscoveryRecipeService.run_due(now=None) -> dict` — runs every due recipe (continues on per-recipe errors), optionally rescores via `candidate_service` when anyone was created, and returns aggregate stats (`due_count`, `ran_count`, `error_count`, `created_total`, `results`).
   - `DiscoveryRecipeService.cost_summary() -> dict` — builds the operator cost dashboard payload: per-provider `search_credits_used`/`search_credits_remaining` (PDL counted monthly, Coresignal daily, matching `ProviderBudget`'s own period semantics), per-recipe totals (credit units, the Search/Collect split, created/duplicate/merged counts) by calling `expander.recipe_checkpoint(recipe)` for every stored recipe, a running `duplicates_skipped` total (`duplicate_count + merged_count` summed across checkpoints), an `enrichment_credits_saved` estimate (every search-discovered candidate arrived fully enriched, so each one is an ENRICH-lane credit that was never spent — approximated as the sum of `verified_count + review_count` across checkpoints), and `candidates_by_discovery_source` (via `_candidates_by_discovery_source`).
   - `DiscoveryRecipeService._run(recipe_id, dry_run, override_limit) -> dict` — looks up the recipe (raises `ValueError` if unknown), calls `expander.run_recipe(recipe, dry_run=dry_run, override_limit=override_limit)` (which itself raises `PermissionError` for an unapproved real run — left to propagate to the API layer), records `recipes.set_last_run` on a real run, and returns a flat summary dict (recipe id/provider/dry_run flag, attempted/returned/created/verified/review/merged/duplicates/rejected/rejection_reasons/credit_units/planned_pages).
-  - `DiscoveryRecipeService._recipe_row(recipe) -> dict` — joins a `DiscoveryRecipe`'s stored fields with its current `recipe_checkpoint` (last result count, last created count, last duplicate count, last credit units, last outcome — all `0`/`"never_run"` if no checkpoint exists yet) for the `GET /api/discovery/recipes` list view.
+  - `DiscoveryRecipeService._recipe_row(recipe) -> dict` — joins a `DiscoveryRecipe`'s stored fields with its current `recipe_checkpoint` (last result count, last created count, last duplicate count, last credit units, last outcome — all `0`/`"never_run"` if no checkpoint exists yet) plus `due` for the `GET /api/discovery/recipes` list view.
   - `DiscoveryRecipeService._get(recipe_id) -> DiscoveryRecipe` — fetches a recipe or raises `ValueError` if the id is unknown.
-  - `DiscoveryRecipeService._candidates_by_discovery_source() -> dict[str, int]` — counts discovery-cohort people by `discovery_source` (falling back to `"unspecified"` when unset), for the admin UI's source-mix chart.
+  - `DiscoveryRecipeService._candidates_by_discovery_source() -> dict[str, int]` — counts discovery-cohort people by `discovery_source` (falling back to `"unspecified"` when unset), for the Pipeline page's source-mix chart.
+
+## backend/services/discovery_scheduler.py
+In-process background ticker that periodically calls `DiscoveryRecipeService.run_due()` so Discover stays populated without manual Pipeline clicks.
+
+- `DiscoveryScheduler` — daemon-thread scheduler keyed off `Settings.discovery_background` / `discovery_background_interval_hours`.
+  - `DiscoveryScheduler.__init__(settings, container_factory)` — stores settings and a factory that builds a fresh `Container` per tick (thread-local DB connections).
+  - `DiscoveryScheduler.start() -> None` — no-op when background is disabled; otherwise starts the daemon loop.
+  - `DiscoveryScheduler.stop() -> None` — signals the loop to exit and joins briefly.
+  - `DiscoveryScheduler._loop() -> None` — waits 15s, then repeatedly ticks and sleeps the configured interval hours.
+  - `DiscoveryScheduler._tick() -> None` — builds a container, calls `run_due()`, logs summary, closes the DB; swallows exceptions so one failure does not kill the loop.
 
 ## backend/services/subscriber_digest.py
 Builds and delivers personalized, never-repeat subscriber digests (email HTML/text) and drives the scheduled digest run.

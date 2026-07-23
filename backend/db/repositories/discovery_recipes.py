@@ -84,6 +84,18 @@ class DiscoveryRecipeRepository(BaseRepository):
         )
         self.conn.commit()
 
+    def approve_pending_seeds(self, seed_ids: set[str]) -> int:
+        """One-time migrate: flip seeded recipes from pending → approved so the
+        background scheduler can run them without a manual Pipeline APPROVE."""
+        updated = 0
+        for recipe_id in seed_ids:
+            recipe = self.get(recipe_id)
+            if recipe is None or recipe.approval_state != "pending":
+                continue
+            self.set_approval_state(recipe_id, "approved")
+            updated += 1
+        return updated
+
     def _to_model(self, row: sqlite3.Row) -> DiscoveryRecipe:
         return DiscoveryRecipe(
             id=row["id"], name=row["name"], provider=row["provider"],

@@ -95,9 +95,7 @@ def build_router(container: Container) -> APIRouter:
     def send_test_digest(
         payload: TestDigestRequest,
         request: Request,
-        authorization: str | None = Header(default=None),
     ):
-        _require_admin_secret(container, authorization)
         rate_limit(request, "test-digest", 3, 24 * 60 * 60)
         email = payload.email.strip().lower()
         subscriber = container.subscribers.get_by_email(email)
@@ -156,12 +154,6 @@ def build_router(container: Container) -> APIRouter:
     def overview():
         backtest = container.backtest.run()
         discoveries = container.candidate_service.list_candidates("discovery")
-        if container.settings.is_production:
-            discoveries = [
-                discovery
-                for discovery in discoveries
-                if discovery.get("approval_state") == "approved"
-            ]
         flagged = [d for d in discoveries if d["flagged"]]
         provider_discoveries = [
             discovery
@@ -194,17 +186,12 @@ def build_router(container: Container) -> APIRouter:
     def candidates(cohort: str = "discovery"):
         cohort_arg = None if cohort == "all" else cohort
         rows = container.candidate_service.list_candidates(cohort_arg)
-        if container.settings.is_production and cohort == "discovery":
-            rows = [row for row in rows if row.get("approval_state") == "approved"]
         return {"candidates": rows}
 
     @router.get("/candidates/{person_id}")
     def candidate(person_id: str):
         profile = container.candidate_service.profile(person_id)
-        if not profile or (
-            container.settings.is_production
-            and profile.get("approval_state") != "approved"
-        ):
+        if not profile:
             raise HTTPException(status_code=404, detail="That candidate is no longer available.")
         return profile
 
@@ -217,25 +204,19 @@ def build_router(container: Container) -> APIRouter:
         return {"concentrations": [asdict(c) for c in container.concentrations.all()]}
 
     @router.get("/digests/latest")
-    def latest_digest(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def latest_digest():
         digest = container.digests.latest()
         if not digest:
             return {"digest": None}
         return {"digest": _digest_dict(digest)}
 
     @router.post("/digests/generate")
-    def generate_digest(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def generate_digest():
         digest = container.digest_generator.generate()
         return {"digest": _digest_dict(digest)}
 
     @router.post("/discovery/run")
-    def run_discovery(
-        request: Request,
-        authorization: str | None = Header(default=None),
-    ):
-        _require_admin_secret(container, authorization)
+    def run_discovery(request: Request):
         rate_limit(request, "discovery", 2, 60 * 60)
         try:
             job_id = container.discovery_job.start()
@@ -246,18 +227,15 @@ def build_router(container: Container) -> APIRouter:
         return {"job_id": job_id, "status": container.discovery_job.status()}
 
     @router.get("/discovery/status")
-    def discovery_status(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def discovery_status():
         return container.discovery_job.status()
 
     @router.get("/discovery/recipes")
-    def list_discovery_recipes(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def list_discovery_recipes():
         return {"recipes": container.discovery_recipe_service.list_recipes()}
 
     @router.post("/discovery/recipes/{recipe_id}/approve")
-    def approve_discovery_recipe(recipe_id: str, authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def approve_discovery_recipe(recipe_id: str):
         try:
             return container.discovery_recipe_service.approve(recipe_id)
         except ValueError as exc:
@@ -267,9 +245,7 @@ def build_router(container: Container) -> APIRouter:
     def run_discovery_recipe(
         recipe_id: str,
         limit: int | None = Query(default=None),
-        authorization: str | None = Header(default=None),
     ):
-        _require_admin_secret(container, authorization)
         try:
             return container.discovery_recipe_service.run(recipe_id, override_limit=limit)
         except ValueError as exc:
@@ -281,22 +257,18 @@ def build_router(container: Container) -> APIRouter:
     def dry_run_discovery_recipe(
         recipe_id: str,
         limit: int | None = Query(default=None),
-        authorization: str | None = Header(default=None),
     ):
-        _require_admin_secret(container, authorization)
         try:
             return container.discovery_recipe_service.dry_run(recipe_id, override_limit=limit)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/discovery/cost-summary")
-    def discovery_cost_summary(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def discovery_cost_summary():
         return container.discovery_recipe_service.cost_summary()
 
     @router.post("/digests/send")
-    def send_digest(authorization: str | None = Header(default=None)):
-        _require_admin_secret(container, authorization)
+    def send_digest():
         digest = container.digests.latest()
         if not digest:
             raise HTTPException(status_code=400, detail="generate a digest first")
@@ -311,11 +283,7 @@ def build_router(container: Container) -> APIRouter:
         return {"receipt": receipt, "digest": _digest_dict(digest)}
 
     @router.get("/digest/preview")
-    def preview_digest(
-        email: str = Query(default=""),
-        authorization: str | None = Header(default=None),
-    ):
-        _require_admin_secret(container, authorization)
+    def preview_digest(email: str = Query(default="")):
         target_email = email.strip().lower() or container.settings.owner_test_email.strip().lower()
         if not target_email:
             raise HTTPException(
@@ -328,11 +296,7 @@ def build_router(container: Container) -> APIRouter:
         return container.subscriber_digest.preview(subscriber)
 
     @router.get("/candidate-reviews")
-    def candidate_reviews(
-        state: str | None = Query(default=None),
-        authorization: str | None = Header(default=None),
-    ):
-        _require_admin_secret(container, authorization)
+    def candidate_reviews(state: str | None = Query(default=None)):
         return {
             "reviews": container.candidate_review_service.list_rows(state),
             "source_mix": container.candidate_review_service.approved_mix(),
@@ -342,9 +306,7 @@ def build_router(container: Container) -> APIRouter:
     def review_candidate(
         person_id: str,
         payload: CandidateReviewRequest,
-        authorization: str | None = Header(default=None),
     ):
-        _require_admin_secret(container, authorization)
         try:
             review = container.candidate_review_service.review(
                 person_id=person_id,
@@ -373,6 +335,11 @@ def build_router(container: Container) -> APIRouter:
             dry_run=dry_run,
             recipient=recipient.strip().lower() if recipient else None,
         )
+
+    @router.post("/discovery/cron")
+    def run_discovery_cron(authorization: str | None = Header(default=None)):
+        _require_cron_secret(container, authorization)
+        return container.discovery_recipe_service.run_due()
 
     @router.get("/digest/feedback", response_class=HTMLResponse)
     def digest_feedback(token: str, person_id: str, vote: str):
@@ -461,24 +428,12 @@ def _candidate_source_mix(candidates: list[dict]) -> dict[str, int]:
 def _require_cron_secret(container: Container, authorization: str | None) -> None:
     configured = container.settings.cron_secret
     if not configured:
-        raise HTTPException(status_code=503, detail="Digest scheduling is not configured.")
+        raise HTTPException(status_code=503, detail="Cron scheduling is not configured.")
     supplied = ""
     if authorization and authorization.startswith("Bearer "):
         supplied = authorization.removeprefix("Bearer ").strip()
     if not supplied or not hmac.compare_digest(supplied, configured):
         raise HTTPException(status_code=401, detail="Invalid cron authorization.")
-
-
-def _require_admin_secret(container: Container, authorization: str | None) -> None:
-    configured = container.settings.admin_secret or container.settings.cron_secret
-    if not configured:
-        raise HTTPException(status_code=503, detail="Operator access is not configured.")
-    supplied = ""
-    if authorization and authorization.startswith("Bearer "):
-        supplied = authorization.removeprefix("Bearer ").strip()
-    if not supplied or not hmac.compare_digest(supplied, configured):
-        raise HTTPException(status_code=401, detail="Invalid operator authorization.")
-
 
 def _confirmation_page(message: str, success: bool = True) -> HTMLResponse:
     title = "All set" if success else "Link unavailable"

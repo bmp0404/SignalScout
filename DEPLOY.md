@@ -127,8 +127,40 @@ curl -X POST \
   "https://<your-domain>/api/digest/cron?recipient=you@example.com"
 ```
 
-For a local exact preview, call `GET /api/digest/preview?email=you@example.com` with
-`Authorization: Bearer $ADMIN_SECRET`. The bearer is server-side only and never bundled in React.
+For a local exact preview, call `GET /api/digest/preview?email=you@example.com`
+(no auth required — single-operator product).
+
+## 9. Background discovery (keep Discover populated)
+
+Discovery recipes run automatically — you should not need to click RUN on Pipeline
+just to have people appear. Manual RUN is only for pulling extra people outside the
+normal cadence.
+
+**In-process (always-on app):** on startup the API starts a background ticker
+(`DISCOVERY_BACKGROUND=1` by default) that every
+`DISCOVERY_BACKGROUND_INTERVAL_HOURS` (default `6`) calls `run_due()`. Each recipe
+still only spends credits when its own `weekly` / `biweekly` window has elapsed
+since `last_run`. Seeded recipes are auto-approved so the ticker can run them;
+pause a recipe in the DB (`status=paused`) or set `DISCOVERY_BACKGROUND=0` to stop.
+
+**Railway cron (recommended backup):** Project canvas → **+ Create** → **Empty Service**,
+name it `discovery-cron`, same repo + `DATABASE_URL` (and provider keys). Start command:
+
+```bash
+python scripts/run_discovery_cron.py
+```
+
+Cron schedule example: `0 16 * * *` (daily UTC tick; recipes that are not due no-op).
+
+HTTP equivalent (Bearer `CRON_SECRET`):
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  "https://<your-domain>/api/discovery/cron"
+```
+
+Without `PDL_API_KEY` / `CORESIGNAL_API_KEY`, due recipes no-op (no crash, no people).
 
 ## Troubleshooting
 
@@ -149,9 +181,7 @@ Required for hosted storage and links:
 - `PUBLIC_BASE_URL` — generated Railway HTTPS origin used in feedback/unsubscribe links.
 - `CRON_SECRET` — protects the manual cron endpoint. Generate locally with
   `openssl rand -hex 32`, then store only the output in Railway Variables.
-- `APP_ENV=production` — enables fail-closed operator configuration.
-- `ADMIN_SECRET` — server-side bearer for review, preview, test-email, and operator endpoints;
-  generate with `openssl rand -hex 32` and never place it in frontend code.
+- `APP_ENV=production` — enables fail-closed cron configuration.
 - `OWNER_TEST_EMAIL` — explicit owner-only address permitted for production test sends.
 
 Required for live discovery:

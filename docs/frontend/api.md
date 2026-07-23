@@ -3,12 +3,9 @@
 Thin fetch wrapper plus the single `api` object listing every backend endpoint the frontend calls.
 
 ## frontend/src/api/client.js
-JSON error bodies are surfaced via `err.detail`/`err.status`. Operator-only pages (`DiscoveryAdmin`) authenticate by calling `setOperatorToken` once with an operator-entered secret; every subsequent request automatically carries it as a Bearer header — this is additive (empty header when unset) so it doesn't change behavior for existing unauthenticated calls.
+JSON error bodies are surfaced via `err.detail`/`err.status`. Requests are unauthenticated (single-operator product); only the server-side cron endpoint still requires a secret, and the browser never calls it.
 
-- `operatorToken` — module-level string, empty by default.
-- `setOperatorToken(token)` — sets `operatorToken`, called by `DiscoveryAdmin`'s unlock form.
-- `authHeaders() -> object` — returns `{ Authorization: 'Bearer <operatorToken>' }` when `operatorToken` is set, else `{}`.
-- `request(path, options = {}) -> Promise<any>` — wraps `fetch`, merging `authHeaders()` into every request's headers (caller-supplied headers win on conflict), throws an `Error` (with `.status` and message from the response's `detail` field when present) on non-OK responses, otherwise resolves the parsed JSON body.
+- `request(path, options = {}) -> Promise<any>` — wraps `fetch`, throws an `Error` (with `.status` and message from the response's `detail` field when present) on non-OK responses, otherwise resolves the parsed JSON body.
 - `api.overview() -> Promise` — `GET /api/overview`.
 - `api.candidates(cohort = 'discovery') -> Promise` — `GET /api/candidates?cohort=<cohort>`.
 - `api.candidate(id) -> Promise` — `GET /api/candidates/:id`.
@@ -27,3 +24,4 @@ JSON error bodies are surfaced via `err.detail`/`err.status`. Operator-only page
 - `api.dryRunRecipe(id, limit) -> Promise` — `POST /api/discovery/recipes/:id/dry-run`, with `?limit=` appended when `limit` is truthy.
 - `api.approveRecipe(id) -> Promise` — `POST /api/discovery/recipes/:id/approve`.
 - `api.discoveryCostSummary() -> Promise` — `GET /api/discovery/cost-summary`.
+- `api.reviewCandidate(id, payload) -> Promise` — `PUT /api/candidate-reviews/:id` with a JSON body (at minimum `{ state }`).

@@ -28,7 +28,7 @@ Backend pipeline order: `domain` → `db` → `scrapers` → `scoring` / `discov
 |---|---|---|
 | [frontend/core.md](frontend/core.md) | `main.jsx`, `App.jsx`, `index.css` | App entry, shell, and global styling. |
 | [frontend/api.md](frontend/api.md) | `api/client.js` | The fetch wrapper and `api` object listing every backend endpoint the frontend calls. |
-| [frontend/pages.md](frontend/pages.md) | `pages/*` | The four page views: Discover, Backtest, Digest, and DiscoveryAdmin. |
+| [frontend/pages.md](frontend/pages.md) | `pages/*` | The four page views: Discover, Backtest, Digest, and Pipeline. |
 | [frontend/components.md](frontend/components.md) | `components/*` | Reusable presentational components and view-model helpers shared across pages. |
 
 ## Other

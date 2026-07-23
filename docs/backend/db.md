@@ -79,6 +79,7 @@ Self-provisioning (`CREATE TABLE IF NOT EXISTS`) repository for `DiscoveryRecipe
   - `DiscoveryRecipeRepository.set_last_run(recipe_id, when)` — updates just the `last_run` column.
   - `DiscoveryRecipeRepository.set_approval_state(recipe_id, approval_state)` — updates just the `approval_state` column.
   - `DiscoveryRecipeRepository.set_status(recipe_id, status)` — updates just the `status` column.
+  - `DiscoveryRecipeRepository.approve_pending_seeds(seed_ids) -> int` — one-time migrate: flips matching seeded recipes from `pending` → `approved` so the background scheduler can run them; returns how many rows changed.
   - `DiscoveryRecipeRepository._to_model(row) -> DiscoveryRecipe` — converts a DB row into a `DiscoveryRecipe`, decoding the JSON `filters_json`/`relative_filters_json` columns.
 
 ## backend/db/repositories/enrichment.py

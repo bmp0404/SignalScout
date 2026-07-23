@@ -1,53 +1,35 @@
 import { useEffect, useState } from 'react';
-import { api, setOperatorToken } from '../api/client.js';
+import { api } from '../api/client.js';
 import CostDashboard from '../components/CostDashboard.jsx';
-import EvidencePanel from '../components/EvidencePanel.jsx';
 import SourceMixChart from '../components/SourceMixChart.jsx';
 
 function providerLabel(provider) {
   return provider === 'pdl' ? 'PDL' : provider === 'coresignal' ? 'Coresignal' : provider;
 }
 
-export default function DiscoveryAdmin() {
-  const [tokenInput, setTokenInput] = useState('');
-  const [unlocked, setUnlocked] = useState(false);
+export default function Pipeline() {
   const [recipes, setRecipes] = useState(null);
   const [costSummary, setCostSummary] = useState(null);
-  const [awaitingReview, setAwaitingReview] = useState([]);
   const [busyId, setBusyId] = useState(null);
   const [runSummary, setRunSummary] = useState(null);
   const [error, setError] = useState('');
-  const [evidenceId, setEvidenceId] = useState(null);
 
   const loadAll = () => {
     setError('');
     Promise.all([
       api.discoveryRecipes(),
       api.discoveryCostSummary(),
-      api.candidates('discovery'),
     ])
-      .then(([r, c, cand]) => {
+      .then(([r, c]) => {
         setRecipes(r.recipes);
         setCostSummary(c);
-        setAwaitingReview(
-          (cand.candidates || [])
-            .filter((row) => row.approval_state === 'unreviewed')
-            .sort((a, b) => (b.score || 0) - (a.score || 0))
-            .slice(0, 10),
-        );
       })
-      .catch(() => setError('Discovery admin data is unavailable. Check the operator secret and try again.'));
+      .catch(() => setError('Pipeline data is unavailable. Try refreshing.'));
   };
 
   useEffect(() => {
-    if (unlocked) loadAll();
-  }, [unlocked]);
-
-  const unlock = (e) => {
-    e.preventDefault();
-    setOperatorToken(tokenInput.trim());
-    setUnlocked(true);
-  };
+    loadAll();
+  }, []);
 
   const runRecipe = async (id, dryRun) => {
     setBusyId(id);
@@ -81,34 +63,16 @@ export default function DiscoveryAdmin() {
     }
   };
 
-  if (!unlocked) {
-    return (
-      <div className="max-w-md mx-auto bg-card border border-line rounded-md px-6 py-8">
-        <p className="label-mono text-olive">Operator access</p>
-        <h2 className="font-display text-2xl mt-2">Discovery admin</h2>
-        <p className="text-sm text-ink-soft mt-2">Enter the operator secret to view recipes and spend.</p>
-        <form onSubmit={unlock} className="flex gap-2 mt-4">
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            placeholder="Operator secret"
-            className="flex-1 border border-line rounded-sm px-3 py-2 text-sm bg-transparent"
-          />
-          <button className="bg-olive hover:bg-olive-dark text-cream font-mono text-xs px-4 py-2 rounded-sm">
-            UNLOCK
-          </button>
-        </form>
-      </div>
-    );
-  }
-
   return (
     <div>
       <div className="flex items-end justify-between mb-6">
         <div>
-          <p className="label-mono text-olive">Operator only</p>
-          <h2 className="font-display text-3xl mt-1">Discovery admin</h2>
+          <p className="label-mono text-olive">Find more people</p>
+          <h2 className="font-display text-3xl mt-1">Pipeline</h2>
+          <p className="text-sm text-ink-soft mt-2 max-w-xl">
+            Recipes run automatically in the background on their weekly/biweekly schedule.
+            Use RUN only when you want extra people outside that cadence.
+          </p>
         </div>
         <button
           onClick={loadAll}
@@ -210,33 +174,6 @@ export default function DiscoveryAdmin() {
           </tbody>
         </table>
       </div>
-
-      <div className="bg-card border border-line rounded-md px-5 py-4">
-        <span className="label-mono">latest discoveries awaiting review</span>
-        {awaitingReview.length === 0 ? (
-          <p className="text-sm text-ink-faint mt-2">Nothing pending review.</p>
-        ) : (
-          <div className="mt-3 space-y-2">
-            {awaitingReview.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => setEvidenceId(c.id)}
-                className="w-full flex items-center justify-between border border-line rounded-sm px-3 py-2 hover:border-olive text-left"
-              >
-                <span>
-                  <span className="font-medium">{c.name}</span>{' '}
-                  <span className="font-mono text-[10px] text-ink-faint">
-                    {c.discovery_source || c.discovery_origin || 'unspecified'}
-                  </span>
-                </span>
-                <span className="font-mono text-xs text-olive">{Math.round(c.score || 0)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {evidenceId && <EvidencePanel personId={evidenceId} onClose={() => setEvidenceId(null)} />}
     </div>
   );
 }

@@ -4,7 +4,14 @@ import ContactLinks from './ContactLinks.jsx';
 import SignalTimeline from './SignalTimeline.jsx';
 import { sourceLabel } from './SignalBadge.jsx';
 
-export default function EvidencePanel({ personId, onClose }) {
+export default function EvidencePanel({
+  personId,
+  onClose,
+  onApprove,
+  onReject,
+  onUnreview,
+  reviewBusy = false,
+}) {
   const [profile, setProfile] = useState(null);
   const [state, setState] = useState('loading');
 
@@ -125,6 +132,42 @@ export default function EvidencePanel({ personId, onClose }) {
               ))}
             </ul>
           </>
+        )}
+
+        {(onApprove || onReject || onUnreview) && (
+          <div className="flex flex-wrap items-center gap-2 mt-8 pt-6 border-t border-line">
+            <span className="label-mono mr-2">review</span>
+            {onApprove && (
+              <button
+                type="button"
+                disabled={reviewBusy}
+                onClick={onApprove}
+                className="bg-olive hover:bg-olive-dark disabled:bg-ink-faint text-cream font-mono text-[10px] tracking-widest px-3 py-1.5 rounded-sm"
+              >
+                APPROVE
+              </button>
+            )}
+            {onReject && (
+              <button
+                type="button"
+                disabled={reviewBusy}
+                onClick={onReject}
+                className="border border-line text-ink-soft font-mono text-[10px] tracking-widest px-3 py-1.5 rounded-sm hover:border-olive hover:text-olive disabled:opacity-50"
+              >
+                REJECT
+              </button>
+            )}
+            {onUnreview && (
+              <button
+                type="button"
+                disabled={reviewBusy}
+                onClick={onUnreview}
+                className="border border-line text-ink-faint font-mono text-[10px] tracking-widest px-3 py-1.5 rounded-sm hover:border-olive hover:text-olive disabled:opacity-50"
+              >
+                UNREVIEW
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

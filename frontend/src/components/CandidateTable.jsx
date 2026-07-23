@@ -7,6 +7,9 @@ const UNKNOWN_FOLLOWER_CAP = 1000;
 export default function CandidateTable({
   candidates,
   onSelect,
+  onApprove,
+  onReject,
+  reviewBusyId = null,
   highlightIds,
   defaultView = 'provider',
   defaultUnknownsOnly = true,
@@ -191,12 +194,34 @@ export default function CandidateTable({
                     {c.connection_context}
                   </p>
                 )}
-                <button
-                  onClick={() => onSelect(c)}
-                  className="font-mono text-[10px] tracking-widest text-olive hover:text-olive-dark mt-4"
-                >
-                  VIEW FULL EVIDENCE →
-                </button>
+                <div className="flex flex-wrap items-center gap-3 mt-4">
+                  <button
+                    onClick={() => onSelect(c)}
+                    className="font-mono text-[10px] tracking-widest text-olive hover:text-olive-dark"
+                  >
+                    VIEW FULL EVIDENCE →
+                  </button>
+                  {onApprove && (
+                    <button
+                      type="button"
+                      disabled={reviewBusyId === c.id}
+                      onClick={() => onApprove(c)}
+                      className="bg-olive hover:bg-olive-dark disabled:bg-ink-faint text-cream font-mono text-[10px] tracking-widest px-3 py-1 rounded-sm"
+                    >
+                      APPROVE
+                    </button>
+                  )}
+                  {onReject && (
+                    <button
+                      type="button"
+                      disabled={reviewBusyId === c.id}
+                      onClick={() => onReject(c)}
+                      className="border border-line text-ink-soft font-mono text-[10px] tracking-widest px-3 py-1 rounded-sm hover:border-olive hover:text-olive disabled:opacity-50"
+                    >
+                      REJECT
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </article>
