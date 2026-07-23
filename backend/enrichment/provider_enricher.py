@@ -34,6 +34,7 @@ from backend.domain.signal import Signal
 from backend.enrichment.budgets import ENRICH, ProviderBudget
 from backend.enrichment.providers.base import Education, EnrichmentProvider, EnrichmentQuery, EnrichmentResult, Position
 from backend.enrichment.providers.coresignal import CoresignalProvider
+from backend.enrichment.providers.exa import ExaProvider
 from backend.enrichment.providers.pdl import PdlProvider
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,21 @@ def build_provider(settings: Settings) -> EnrichmentProvider | None:
     """Back-compat single-provider selector (first available in the chain)."""
     chain = build_provider_chain(settings)
     return chain[0] if chain else None
+
+
+def build_search_providers(settings: Settings) -> list[EnrichmentProvider]:
+    """Providers available to the SEARCH/lead lane (ProviderExpander).
+
+    Superset of the enrichment chain plus search-only sources like Exa. Exa is
+    kept OUT of the enrichment chain (it has no one-person enrich) so it never
+    consumes an enrich budget slot or caches a miss.
+    """
+    providers = build_provider_chain(settings)
+    if settings.exa_api_key:
+        providers.append(ExaProvider(settings.exa_api_key))
+    else:
+        logger.info("EXA_API_KEY not set — Exa search lane disabled")
+    return providers
 
 
 def _result_to_payload(result: EnrichmentResult) -> dict:
@@ -361,6 +377,20 @@ class ProviderEnricher:
             if signal.signal_type not in existing_types:  # idempotent across re-runs
                 signal.person_id = person.id
                 signals.append(signal)
+
+        if result.raw.get("source") == "exa" and (result.headline or result.raw.get("summary")):
+            # Exa is a semantic web match: anchor the person with a modest,
+            # human-reviewable web-presence signal regardless of tier, so a
+            # lead with sparse structured data still surfaces for review.
+            emit(Signal(
+                person_name=person.name, signal_type="web_presence",
+                signal_category="web", signal_date=today.isoformat(),
+                signal_strength=0.6, source=provider.name,
+                source_url=result.raw.get("url") or result.linkedin_url or "",
+                summary=(result.headline or result.raw.get("summary") or "")[:300],
+                raw_data=result.raw,
+                metadata={"evidence": "exa_web_match", "provider": provider.name},
+            ))
 
         created = self._parse(result.profile_created_at)
         if (

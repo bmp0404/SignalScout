@@ -45,11 +45,15 @@ export default function Digest({ operatorMode = false }) {
 
   const send = async () => {
     setError('');
+    setSendReceipt(null);
+    setBusy(true);
     try {
       const d = await api.sendDigest();
-      setSendReceipt(d.receipt);
+      setSendReceipt(d.summary);
     } catch {
-      setError('The preview could not be prepared. Your subscriber list was not contacted.');
+      setError('The send could not be completed. Your subscriber list may not have been contacted.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -90,18 +94,21 @@ export default function Digest({ operatorMode = false }) {
           </button>
           <button
             onClick={send}
-            disabled={!digest}
+            disabled={busy}
             className="border border-line text-ink-faint font-mono text-xs px-4 py-2 rounded-sm hover:border-olive hover:text-olive disabled:opacity-40"
-            title="Send is stubbed — preview only"
+            title="Send the current approved picks to all active subscribers now"
           >
-            SEND (PREVIEW)
+            {busy ? 'WORKING…' : 'SEND TO SUBSCRIBERS'}
           </button>
         </div>
       </div>
 
       {sendReceipt && (
         <p className="font-mono text-[11px] text-olive border border-olive/40 rounded-sm px-3 py-2 mb-5">
-          {sendReceipt.note}
+          Sent to {sendReceipt.sent_count} of {sendReceipt.subscriber_count} active subscriber
+          {sendReceipt.subscriber_count === 1 ? '' : 's'}
+          {sendReceipt.empty_count ? ` · ${sendReceipt.empty_count} had no new people` : ''}
+          {sendReceipt.subscriber_count === 0 ? ' · no active subscribers yet' : ''}.
         </p>
       )}
 

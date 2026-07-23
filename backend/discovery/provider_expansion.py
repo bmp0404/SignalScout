@@ -200,13 +200,22 @@ class ProviderExpander:
         employee_filters = recipe.filters.get("employee_title", {})
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         today = now[:10]
+        if dry_run:
+            # Never touch the provider in a dry run — company search + collect are
+            # billed, so calling them here would silently burn real credits.
+            result.planned_pages.append({
+                "provider": provider.name,
+                "label": recipe.name,
+                "query_type": "company_first",
+                "filters": recipe.filters,
+                "size": min(5, max(1, limit)),
+            })
+            return result
         remaining = self.budget.remaining(provider.name, SEARCH)
         if remaining <= 0:
             return result
         companies = provider.search_companies(company_filters, size=min(5, max(1, limit)))
         result.attempted = len(companies)
-        if dry_run:
-            return result
         outcomes: dict[str, int] = {}
         reasons: dict[str, int] = {}
         search_credits = 0
@@ -285,6 +294,10 @@ class ProviderExpander:
         if not filters:
             return None
         return self.identities.checkpoint(recipe.provider, self._filter_identity(filters))
+
+    def has_provider(self, name: str) -> bool:
+        """True when a provider with this name is configured (its API key is set)."""
+        return self._provider_by_name(name) is not None
 
     def _provider_by_name(self, name: str) -> EnrichmentProvider | None:
         for provider in self.providers:
@@ -487,6 +500,9 @@ class ProviderExpander:
         if admission == "founder":
             tier, rejection_reason = self._founder_tier(record)
             education = _best_education(record.education)
+        elif admission == "exa":
+            tier, rejection_reason = self._exa_tier(record)
+            education = _best_education(record.education)
         else:
             tier, rejection_reason = self._evidence_tier(record)
             education = _best_recent_technical_education(record.education)
@@ -618,6 +634,15 @@ class ProviderExpander:
         if not _recent_education(technical):
             return None, "undated_or_stale_education"
         if _recent_movement(record):
+            return "verified", ""
+        return "review", ""
+
+    @staticmethod
+    def _exa_tier(record: EnrichmentResult) -> tuple[str | None, str]:
+        """Exa (semantic web) admission. A confident web-sourced identity is
+        admitted at review tier for operator confirmation; promote to verified
+        only when there's a founder-titled role with dated recent movement."""
+        if any(_is_founder_position(position) for position in record.positions) and _recent_movement(record):
             return "verified", ""
         return "review", ""
 

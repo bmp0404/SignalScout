@@ -28,7 +28,11 @@ from backend.discovery.recipe_seeds import INITIAL_RECIPES
 from backend.enrichment.budgets import ProviderBudget
 from backend.enrichment.contacts import ContactEnricher
 from backend.enrichment.locations import LocationResolver
-from backend.enrichment.provider_enricher import ProviderEnricher, build_provider_chain
+from backend.enrichment.provider_enricher import (
+    ProviderEnricher,
+    build_provider_chain,
+    build_search_providers,
+)
 from backend.scoring.backtest import BacktestRunner
 from backend.scoring.engine import ScoringEngine
 from backend.scrapers.competition_scraper import CompetitionScraper
@@ -70,12 +74,15 @@ class Container:
         self.enrichment_usage = EnrichmentUsageRepository(self.db)
         self.provider_identities = ProviderIdentityRepository(self.db)
         self.provider_chain = build_provider_chain(self.settings)
+        # Search/lead lane: enrichment chain + search-only sources (Exa). Kept
+        # separate so Exa (no one-person enrich) never touches the enrich lane.
+        self.search_providers = build_search_providers(self.settings)
         self.provider_budget = ProviderBudget(self.enrichment_usage, self.settings)
         self.provider_enricher = ProviderEnricher(
             self.provider_chain, self.signals, self.enrichment_cache, self.provider_budget,
         )
         self.provider_expander = ProviderExpander(
-            self.provider_chain, self.persons, self.provider_identities,
+            self.search_providers, self.persons, self.provider_identities,
             self.provider_enricher, self.provider_budget,
             self.settings.provider_discovery_filters_file,
         )

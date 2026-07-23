@@ -155,6 +155,47 @@ class Phase4DigestTests(unittest.TestCase):
             set(),
         )
 
+    def test_send_digest_endpoint_delivers_to_all_active_subscribers(self):
+        app = FastAPI()
+        app.include_router(build_router(self.container))
+        client = TestClient(app)
+        self.container.subscribers.subscribe(
+            "investor@example.com",
+            "daily",
+            {"signal_interests": "", "seed_accounts": []},
+        )
+        sender = StubSender()
+        self.container.subscriber_digest.sender = sender
+
+        response = client.post("/api/digests/send")
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()["summary"]
+        self.assertEqual(summary["subscriber_count"], 1)
+        self.assertEqual(summary["sent_count"], 1)
+        self.assertEqual(len(sender.messages), 1)
+
+        # A second send is deduped per subscriber — nobody new is emailed.
+        again = client.post("/api/digests/send").json()["summary"]
+        self.assertEqual(again["sent_count"], 0)
+        self.assertEqual(again["empty_count"], 1)
+        self.assertEqual(len(sender.messages), 1)
+
+    def test_send_digest_endpoint_previews_when_sender_unconfigured(self):
+        app = FastAPI()
+        app.include_router(build_router(self.container))
+        client = TestClient(app)
+        self.container.subscribers.subscribe(
+            "investor@example.com",
+            "daily",
+            {"signal_interests": "", "seed_accounts": []},
+        )
+        # Default container has no Resend key -> preview-only, no send recorded.
+        summary = client.post("/api/digests/send").json()["summary"]
+        self.assertEqual(summary["subscriber_count"], 1)
+        self.assertEqual(summary["sent_count"], 0)
+        subscriber = self.container.subscribers.get_by_email("investor@example.com")
+        self.assertEqual(self.container.digest_sends.sent_person_ids(subscriber.id), set())
+
     def test_resend_sender_uses_html_and_plain_text_transport(self):
         session = StubSession()
         sender = ResendSender(

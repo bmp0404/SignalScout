@@ -160,7 +160,7 @@ curl -X POST \
   "https://<your-domain>/api/discovery/cron"
 ```
 
-Without `PDL_API_KEY` / `CORESIGNAL_API_KEY`, due recipes no-op (no crash, no people).
+Without `PDL_API_KEY` / `CORESIGNAL_API_KEY` / `EXA_API_KEY`, due recipes for that provider no-op (no crash, no people).
 
 ## Troubleshooting
 
@@ -202,6 +202,9 @@ is present; missing keys degrade to a no-op.
   Obtain it from the [PDL dashboard](https://dashboard.peopledatalabs.com/).
 - `CORESIGNAL_API_KEY` — Coresignal employee API key (independent search + PDL
   no-match fallback). [Coresignal self-service](https://dashboard.coresignal.com/sign-up).
+- `EXA_API_KEY` — Exa AI key (https://exa.ai) for the semantic web people-search
+  lead lane (search-only; PDL still does one-person enrichment). Missing key ->
+  Exa recipes no-op. `EXA_DAILY_CAP` sets its separate daily record cap (default `20`).
 - `PDL_MONTHLY_CAP` — PDL lookups/month (free tier ~`100`); default `100`.
 - `PDL_SEARCH_SPLIT` — fraction of the PDL monthly cap reserved for the
   provider-search lane (search-first); default `0.7`.

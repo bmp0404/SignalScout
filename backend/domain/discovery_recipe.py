@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 class DiscoveryRecipe:
     id: str
     name: str
-    provider: str  # "pdl" | "coresignal"
-    query_type: str  # "student_technical" | "founder" | "company_first"
+    provider: str  # "pdl" | "coresignal" | "exa"
+    query_type: str  # "student_technical" | "founder" | "company_first" | "exa"
     filters: dict = field(default_factory=dict)
     # filter key -> lookback days; computed relative to "today" at run time and
     # merged into `filters` (e.g. {"job_start_date_gte": 30}). Never hardcode dates.

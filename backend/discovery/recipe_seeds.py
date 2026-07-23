@@ -107,4 +107,40 @@ CORESIGNAL_RECIPES = [
     ),
 ]
 
-INITIAL_RECIPES = [*PDL_RECIPES, *CORESIGNAL_RECIPES]
+# Exa recipes use natural-language semantic queries (query_type "exa"); the
+# `query` string is the only filter Exa consumes. Results are admitted at review
+# tier for operator confirmation in Discover.
+EXA_RECIPES = [
+    DiscoveryRecipe(
+        id="exa_young_technical_founders",
+        name="Young technical founders (Exa)",
+        provider="exa",
+        query_type="exa",
+        filters={
+            "query": (
+                "young technical founders who very recently started a startup, "
+                "strong engineering background, early and not yet well known"
+            ),
+        },
+        default_limit=15,
+        frequency="weekly",
+        approval_state="approved",
+    ),
+    DiscoveryRecipe(
+        id="exa_competition_builders",
+        name="Olympiad & competition builders (Exa)",
+        provider="exa",
+        query_type="exa",
+        filters={
+            "query": (
+                "students and recent grads who won programming, math, or science "
+                "olympiads and are now building ambitious software projects"
+            ),
+        },
+        default_limit=15,
+        frequency="weekly",
+        approval_state="approved",
+    ),
+]
+
+INITIAL_RECIPES = [*PDL_RECIPES, *CORESIGNAL_RECIPES, *EXA_RECIPES]

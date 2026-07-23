@@ -42,6 +42,9 @@ WEIGHTS: dict[str, float] = {
     "linkedin_created_recently": 8.0,  # brand-new profile = about to do something
     "education_signal": 4.0,
     "job_change": 4.0,
+    # semantic web discovery (Exa) — a labeled web match, weaker than dated
+    # provider evidence; enough to surface a real lead into the review queue.
+    "web_presence": 3.0,
 }
 
 DEFAULT_WEIGHT = 3.0

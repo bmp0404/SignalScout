@@ -13,7 +13,6 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from backend.container import Container
-from backend.digest.sender import EmailMessage, NoopSender
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -269,18 +268,10 @@ def build_router(container: Container) -> APIRouter:
 
     @router.post("/digests/send")
     def send_digest():
-        digest = container.digests.latest()
-        if not digest:
-            raise HTTPException(status_code=400, detail="generate a digest first")
-        receipt = NoopSender().send(
-            EmailMessage(
-                subject=digest.subject,
-                html=digest.html,
-                text="\n".join([digest.subject, *[entry.name for entry in digest.entries]]),
-            ),
-            to="preview@local.invalid",
-        )
-        return {"receipt": receipt, "digest": _digest_dict(digest)}
+        """Send the current curated (approved + contactable) picks to every
+        active subscriber right now via Resend. Falls back to preview receipts
+        when Resend is unconfigured. Re-sends are deduped per subscriber."""
+        return {"summary": container.subscriber_digest.send_to_active()}
 
     @router.get("/digest/preview")
     def preview_digest(email: str = Query(default="")):

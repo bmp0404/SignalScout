@@ -35,6 +35,7 @@ from backend.enrichment.providers.base import (
     ProviderSearchPage,
 )
 from backend.enrichment.providers.coresignal import CoresignalProvider
+from backend.enrichment.providers.exa import ExaProvider
 from backend.enrichment.providers.pdl import PdlProvider
 from backend.scoring.engine import ScoringEngine
 from backend.services.candidate_service import CandidateService
@@ -609,6 +610,7 @@ class CompanyFirstRecipeTests(ChainTestBase):
 
         result = expander.run_recipe(recipe, dry_run=True)
         self.assertEqual(result.created, [])
+        self.assertEqual(provider.company_search_calls, 0)  # step 1 never runs in dry-run
         self.assertEqual(provider.employee_search_calls, [])  # step 2 never runs
         self.assertEqual(
             self.usage.count_for("coresignal", datetime.now(timezone.utc).date().isoformat()), 0
@@ -903,6 +905,156 @@ class AdapterHttpMockTests(unittest.TestCase):
         )
         self.assertEqual(session.post_calls, 1)
         self.assertEqual(resumed.api_requests, 1)
+
+
+def _exa_people_payload():
+    return {
+        "results": [
+            {
+                "url": "https://www.linkedin.com/in/ada-builder",
+                "title": "Ada Builder - Founder at NovaAI",
+                "id": "doc-1",
+                "highlights": ["Founder building NovaAI"],
+                "entities": [
+                    {
+                        "id": "person-123",
+                        "type": "person",
+                        "version": 1,
+                        "properties": {
+                            "name": "Ada Builder",
+                            "firstName": "Ada",
+                            "lastName": "Builder",
+                            "location": "San Francisco, CA",
+                            "workHistory": [
+                                {
+                                    "title": "Founder",
+                                    "location": "SF",
+                                    "dates": {"from": "2025-01", "to": None},
+                                    "company": {"id": "c1", "name": "NovaAI"},
+                                }
+                            ],
+                            "educationHistory": [
+                                {
+                                    "degree": "BS Computer Science",
+                                    "dates": {"from": "2019", "to": "2023"},
+                                    "institution": {"id": "i1", "name": "MIT"},
+                                }
+                            ],
+                            "research": None,
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+
+class ExaAdapterTests(unittest.TestCase):
+    def test_search_page_maps_person_entity(self):
+        session = _DummySession()
+        session.post_response = _Resp(200, _exa_people_payload())
+        provider = ExaProvider("k", session=session)
+
+        page = provider.search_page({"query": "young technical founders"}, size=10)
+
+        self.assertEqual(session.last_post_json["category"], "people")
+        self.assertEqual(page.returned_records, 1)
+        self.assertEqual(page.credit_units, 1)
+        self.assertTrue(page.exhausted)
+        result = page.results[0]
+        self.assertEqual(result.full_name, "Ada Builder")
+        self.assertEqual(result.linkedin_url, "https://www.linkedin.com/in/ada-builder")
+        self.assertEqual(result.provider_person_id, "person-123")
+        self.assertEqual(result.location, "San Francisco, CA")
+        self.assertEqual(len(result.positions), 1)
+        self.assertEqual(result.positions[0].title, "Founder")
+        self.assertEqual(result.positions[0].company, "NovaAI")
+        self.assertTrue(result.positions[0].is_current)
+        self.assertEqual(len(result.education), 1)
+        self.assertEqual(result.education[0].school, "MIT")
+        self.assertEqual(result.education[0].start_date, "2019-01-01")
+        self.assertEqual(result.education[0].end_date, "2023-01-01")
+        self.assertEqual(result.raw["source"], "exa")
+        self.assertIn("Founder", result.headline)
+
+    def test_enrich_person_is_search_only_noop(self):
+        provider = ExaProvider("k", session=_DummySession())
+        self.assertIsNone(provider.enrich_person(_query()))
+        self.assertIsNone(provider.last_error)
+
+    def test_missing_query_makes_no_request(self):
+        session = _DummySession()
+        provider = ExaProvider("k", session=session)
+        page = provider.search_page({}, size=5)
+        self.assertEqual(page.results, [])
+        self.assertEqual(session.post_calls, 0)
+
+    def test_http_error_is_fail_soft(self):
+        session = _DummySession()
+        session.post_response = _Resp(500, {}, text="boom")
+        provider = ExaProvider("k", session=session)
+        page = provider.search_page({"query": "x"}, size=5)
+        self.assertEqual(page.results, [])
+        self.assertEqual(provider.last_error, "HTTP 500")
+
+
+class ExaRecipeTests(ChainTestBase):
+    def _exa_result(self, pid="person-1", name="Ada Builder", founder=True) -> EnrichmentResult:
+        positions = (
+            [Position(company="NovaAI", title="Founder", start_date=_recent(60), is_current=True)]
+            if founder
+            else []
+        )
+        return EnrichmentResult(
+            linkedin_url="https://linkedin.com/in/ada-builder",
+            headline="Founder at NovaAI",
+            education=[],
+            positions=positions,
+            location="San Francisco, CA",
+            provider="exa",
+            provider_person_id=pid,
+            full_name=name,
+            raw={"source": "exa", "url": "https://exa.example/ada", "headline": "Founder at NovaAI"},
+        )
+
+    def _recipe(self, **overrides) -> DiscoveryRecipe:
+        base = dict(
+            id="exa_young_technical_founders", name="Young technical founders (Exa)",
+            provider="exa", query_type="exa",
+            filters={"query": "young technical founders"},
+            default_limit=10, approval_state="approved",
+        )
+        base.update(overrides)
+        return DiscoveryRecipe(**base)
+
+    def test_exa_recipe_creates_reviewable_person_with_web_signal(self):
+        provider = FakeProvider("exa", search_results=[self._exa_result(founder=False)])
+        expander = self._expander([provider], self._filters_file())
+
+        result = expander.run_recipe(self._recipe())
+
+        self.assertEqual(len(result.created), 1)
+        person = result.created[0]
+        self.assertEqual(person.discovery_source, "exa_discovery")
+        self.assertEqual(person.discovery_origin, "provider_search")
+        self.assertEqual(person.evidence_tier, "review")
+        self.assertTrue(person.needs_review)
+        signal_types = {s.signal_type for s in self.signals.for_person(person.id)}
+        self.assertIn("web_presence", signal_types)
+
+    def test_exa_founder_with_recent_move_is_verified(self):
+        provider = FakeProvider("exa", search_results=[self._exa_result(founder=True)])
+        expander = self._expander([provider], self._filters_file())
+
+        result = expander.run_recipe(self._recipe())
+        self.assertEqual(len(result.created), 1)
+        self.assertEqual(result.created[0].evidence_tier, "verified")
+
+    def test_exa_recipe_missing_provider_no_ops(self):
+        expander = self._expander([], self._filters_file())
+        result = expander.run_recipe(self._recipe())
+        self.assertEqual(result.created, [])
+        self.assertFalse(expander.has_provider("exa"))
 
 
 class BacktestRegressionTests(unittest.TestCase):

@@ -45,6 +45,9 @@ class ProviderBudget:
             # One shared daily cap across both lanes.
             cap = self.settings.coresignal_daily_cap
             return {SEARCH: cap, ENRICH: cap}
+        if provider == "exa":
+            # Search-only lead lane with its own daily cap; no enrich lane.
+            return {SEARCH: self.settings.exa_daily_cap, ENRICH: 0}
         return {SEARCH: 0, ENRICH: 0}
 
     def _used(self, provider: str, lane: str) -> int:
@@ -54,6 +57,8 @@ class ProviderBudget:
         if provider == "coresignal":
             # Daily cap is shared across lanes, so count the whole day.
             return self.usage.count_for(provider, now.date().isoformat())
+        if provider == "exa":
+            return self.usage.count_for(provider, now.date().isoformat(), lane)
         return 0
 
     def remaining(self, provider: str, lane: str) -> int:

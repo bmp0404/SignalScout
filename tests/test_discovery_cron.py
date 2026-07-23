@@ -63,22 +63,21 @@ class DiscoveryCronTests(unittest.TestCase):
         recipe.status = "paused"
         self.assertFalse(service.is_due(recipe, now))
 
-    def test_run_due_marks_last_run_when_provider_missing(self):
-        # No PDL/Coresignal keys → expander no-ops but still records last_run.
-        before = {
-            row["id"]: row["last_run"]
-            for row in self.container.discovery_recipe_service.list_recipes()
-        }
+    def test_run_due_does_not_advance_last_run_when_provider_missing(self):
+        # No PDL/Coresignal/Exa keys → the expander never reaches a provider, so
+        # last_run must NOT advance; the recipe stays due until a key is added.
         result = self.container.discovery_recipe_service.run_due()
         self.assertGreaterEqual(result["due_count"], 1)
         self.assertEqual(result["error_count"], 0)
+        self.assertEqual(result["created_total"], 0)
         after = self.container.discovery_recipe_service.list_recipes()
         for row in after:
-            if before.get(row["id"]) is None and row["frequency"] != "manual":
-                self.assertIsNotNone(row["last_run"], row["id"])
-        # Second tick should find nothing due.
+            if row["frequency"] != "manual":
+                self.assertIsNone(row["last_run"], row["id"])
+                self.assertFalse(row["provider_configured"], row["id"])
+        # Second tick still finds the same recipes due (schedule not skipped).
         again = self.container.discovery_recipe_service.run_due()
-        self.assertEqual(again["due_count"], 0)
+        self.assertEqual(again["due_count"], result["due_count"])
 
     def test_discovery_cron_requires_secret(self):
         unauthorized = self.client.post("/api/discovery/cron")

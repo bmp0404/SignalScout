@@ -152,13 +152,24 @@ class DiscoveryRecipeService:
     def _run(self, recipe_id: str, dry_run: bool, override_limit: int | None) -> dict:
         recipe = self._get(recipe_id)
         result = self.expander.run_recipe(recipe, dry_run=dry_run, override_limit=override_limit)
-        if not dry_run:
+        # Only advance the schedule when the provider was actually reached. A
+        # missing provider key or an exhausted budget produces an empty result;
+        # advancing last_run there would silently skip the recipe's next window.
+        reached_provider = bool(
+            result.attempted
+            or result.credit_units
+            or result.created
+            or result.returned_records
+        )
+        if not dry_run and reached_provider:
             self.recipes.set_last_run(
                 recipe_id, datetime.now(timezone.utc).isoformat(timespec="seconds")
             )
         return {
             "recipe_id": recipe_id,
             "provider": recipe.provider,
+            "provider_configured": self.expander.has_provider(recipe.provider),
+            "reached_provider": reached_provider,
             "dry_run": dry_run,
             "attempted": result.attempted,
             "returned_records": result.returned_records,
@@ -179,6 +190,7 @@ class DiscoveryRecipeService:
             "id": recipe.id,
             "name": recipe.name,
             "provider": recipe.provider,
+            "provider_configured": self.expander.has_provider(recipe.provider),
             "query_type": recipe.query_type,
             "default_limit": recipe.default_limit,
             "frequency": recipe.frequency,

@@ -138,6 +138,24 @@ class SubscriberDigestService:
             "results": results,
         }
 
+    def send_to_active(self, dry_run: bool = False, now: datetime | None = None) -> dict:
+        """Operator "send now": deliver to every active subscriber immediately,
+        ignoring the daily/weekly cadence that `run_due` enforces. Reuses the
+        same per-subscriber build + Resend sender + dedup ledger, so a person is
+        never emailed twice. Preview-only when Resend is unconfigured."""
+        run_at = now or datetime.now(timezone.utc)
+        self.candidates.rescore_all()
+        subscribers = self.subscribers.active()
+        results = [self.deliver(subscriber, dry_run=dry_run) for subscriber in subscribers]
+        return {
+            "dry_run": dry_run,
+            "run_at": run_at.isoformat(timespec="seconds"),
+            "subscriber_count": len(results),
+            "sent_count": sum(result["status"] == "sent" for result in results),
+            "empty_count": sum(result["status"] == "empty" for result in results),
+            "results": results,
+        }
+
     @staticmethod
     def _preference_rank(candidate: dict, subscriber: Subscriber) -> tuple[int, float]:
         interests = str(subscriber.preferences.get("signal_interests", "")).lower().split()

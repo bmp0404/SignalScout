@@ -60,6 +60,9 @@ class Settings:
     enrichment_provider: str = field(default_factory=lambda: os.environ.get("ENRICHMENT_PROVIDER", "pdl"))
     pdl_api_key: str = field(default_factory=lambda: os.environ.get("PDL_API_KEY", ""))
     coresignal_api_key: str = field(default_factory=lambda: os.environ.get("CORESIGNAL_API_KEY", ""))
+    # Exa AI semantic people-search — an independent LEAD discovery lane (search only,
+    # no one-person enrichment). Missing key -> Exa recipes no-op like the others.
+    exa_api_key: str = field(default_factory=lambda: os.environ.get("EXA_API_KEY", ""))
 
     # Provider budgets (search-first). PDL free tier is ~100 lookups/month, shared across
     # provider-search discovery and one-person GitHub enrichment. The split reserves a
@@ -71,6 +74,8 @@ class Settings:
     # Coresignal runs its OWN independent search + serves as PDL's no-match fallback; both
     # share this separate daily cap.
     coresignal_daily_cap: int = field(default_factory=lambda: int(os.environ.get("CORESIGNAL_DAILY_CAP", "20")))
+    # Exa's own separate daily search cap (records/day). Exa search is ~$7/1k requests.
+    exa_daily_cap: int = field(default_factory=lambda: int(os.environ.get("EXA_DAILY_CAP", "20")))
     # Legacy global daily counter setting; superseded by provider-scoped budgets above.
     daily_enrichment_budget: int = field(default_factory=lambda: int(os.environ.get("DAILY_ENRICHMENT_BUDGET", "100")))
 
