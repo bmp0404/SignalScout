@@ -32,6 +32,12 @@ export const api = {
   backtest: () => request('/api/backtest'),
   latestDigest: () => request('/api/digests/latest'),
   upcomingDigest: (offset = 0) => request(`/api/digest/upcoming?offset=${offset}`),
+  digestSettings: () => request('/api/digest/settings'),
+  updateDigestSettings: (payload) => request('/api/digest/settings', {
+    method: 'PUT',
+    headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
   generateDigest: () => request('/api/digests/generate', { method: 'POST', headers: adminHeaders() }),
   sendDigest: () => request('/api/digests/send', { method: 'POST', headers: adminHeaders() }),
   subscribe: (payload) => request('/api/subscribers', {

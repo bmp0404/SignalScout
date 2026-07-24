@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import ContactLinks from '../components/ContactLinks.jsx';
 import DigestSignup from '../components/DigestSignup.jsx';
@@ -40,6 +40,45 @@ export default function Digest() {
     state: loadState,
     reload,
   } = useAsyncData(() => api.upcomingDigest(offsetRef.current));
+
+  const [eligibleTotal, setEligibleTotal] = useState(null);
+  const [discoveriesTotal, setDiscoveriesTotal] = useState(null);
+  const [minScore, setMinScore] = useState(null);
+  const [minScoreInput, setMinScoreInput] = useState('');
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+
+  const loadQualification = () =>
+    Promise.all([api.overview(), api.digestSettings()])
+      .then(([overview, settings]) => {
+        setEligibleTotal(overview.digest_eligible_total);
+        setDiscoveriesTotal(overview.discoveries_total);
+        setMinScore(settings.min_score);
+        setMinScoreInput(String(settings.min_score));
+      })
+      .catch(() => {});
+
+  useEffect(() => {
+    loadQualification();
+  }, []);
+
+  const saveMinScore = async () => {
+    const value = Number(minScoreInput);
+    if (Number.isNaN(value) || value < 0 || value > 100) {
+      setSettingsError('Enter a score between 0 and 100.');
+      return;
+    }
+    setSettingsError('');
+    setSettingsBusy(true);
+    try {
+      await api.updateDigestSettings({ min_score: value });
+      await Promise.all([loadQualification(), reload()]);
+    } catch {
+      setSettingsError('Could not save the minimum score. Try again.');
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
 
   const refresh = async () => {
     setError('');
@@ -109,6 +148,35 @@ export default function Digest() {
         </div>
       </div>
 
+      {eligibleTotal !== null && discoveriesTotal !== null && (
+        <p className="font-mono text-[11px] text-ink-faint mb-3">
+          {eligibleTotal} of {discoveriesTotal} discovered people currently qualify for the digest.
+        </p>
+      )}
+
+      <AdminOnly>
+        <div className="flex flex-wrap items-center gap-2 mb-5 font-mono text-xs">
+          <label htmlFor="digest-min-score" className="text-ink-faint">Minimum score</label>
+          <input
+            id="digest-min-score"
+            type="number"
+            min="0"
+            max="100"
+            value={minScoreInput}
+            onChange={(e) => setMinScoreInput(e.target.value)}
+            className="w-20 border border-line rounded-sm px-2 py-1"
+          />
+          <button
+            onClick={saveMinScore}
+            disabled={settingsBusy || Number(minScoreInput) === minScore}
+            className="border border-line text-ink-soft px-3 py-1 rounded-sm hover:border-olive hover:text-olive disabled:opacity-40"
+          >
+            {settingsBusy ? 'SAVING…' : 'SAVE'}
+          </button>
+          {settingsError && <span className="text-red-700">{settingsError}</span>}
+        </div>
+      </AdminOnly>
+
       {auto && (
         <p className="font-mono text-[11px] text-olive border border-olive/40 rounded-sm px-3 py-2 mb-5">
           {autoSendSummary(auto)}
@@ -143,7 +211,7 @@ export default function Digest() {
       {loadState === 'success' && !entries.length && (
         <div className="bg-card border border-line rounded-md px-6 py-8 text-center">
           <p className="font-display text-xl">Everyone available has already been featured.</p>
-          <p className="text-sm text-ink-faint mt-1">Approve more candidates in Discover, or run the Pipeline to surface new people.</p>
+          <p className="text-sm text-ink-faint mt-1">Run the Pipeline to surface new people, or lower the minimum score.</p>
         </div>
       )}
 
@@ -153,14 +221,7 @@ export default function Digest() {
             <span className="font-mono text-[11px] text-olive">#{String(i + 1).padStart(3, '0')}</span>
             <span className="font-mono text-xl text-olive">{Math.round(entry.score)}</span>
           </div>
-          <h3 className="font-display text-2xl mt-1">
-            {entry.name}
-            {entry.provisional && (
-              <span className="ml-2 align-middle font-mono text-[9px] tracking-widest uppercase text-amber-700 border border-amber-300 rounded-sm px-1.5 py-0.5">
-                provisional
-              </span>
-            )}
-          </h3>
+          <h3 className="font-display text-2xl mt-1">{entry.name}</h3>
           <p className="font-mono text-[11px] text-ink-faint mt-0.5">
             {entry.school_line}{entry.location_line ? ` · ${entry.location_line}` : ''}
           </p>

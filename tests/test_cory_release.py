@@ -1,6 +1,7 @@
 """Tests for the Cory-ready release: interval digest cadence, the rotating
-"upcoming" digest preview + verified-tier backfill, recipe re-scan after the
-cadence window, run skip reasons, and the operator (ADMIN_SECRET) gate."""
+"upcoming" digest preview over the verified+contactable+score-gated pool,
+recipe re-scan after the cadence window, run skip reasons, and the operator
+(ADMIN_SECRET) gate."""
 
 import tempfile
 import unittest
@@ -30,7 +31,10 @@ class StubSender(EmailSender):
 
 
 def _approved_person(container: Container, name: str, github: str) -> Person:
-    person = Person(name=name, cohort="discovery", score=70.0, github_username=github)
+    person = Person(
+        name=name, cohort="discovery", score=70.0, github_username=github,
+        evidence_tier="verified",
+    )
     person.email = f"{github}@example.com"
     container.persons.save(person)
     container.signals.save(
@@ -146,23 +150,42 @@ class UpcomingDigestTests(unittest.TestCase):
         # The 4 people not shown in batch one lead batch two (fresh people surface).
         self.assertTrue(next_ids - first_ids)
 
-    def test_verified_tier_backfills_as_provisional(self):
-        # No approved candidates, but a verified-tier person with 2 contact
-        # methods should backfill the preview, flagged provisional.
+    def test_verified_contactable_candidate_appears_without_review(self):
+        # No human review step gates eligibility: a verified-tier, contactable
+        # person with a qualifying score appears on its own, never reviewed.
         person = Person(
-            name="Grace Hopper",
-            cohort="discovery",
-            score=61.0,
-            github_username="grace",
-            evidence_tier="verified",
+            name="Grace Hopper", cohort="discovery", score=70.0,
+            github_username="grace", evidence_tier="verified",
         )
         person.email = "grace@example.com"
         self.container.persons.save(person)
-        body = self.client.get("/api/digest/upcoming").json()
+        self.container.signals.save(
+            Signal(
+                person_id=person.id,
+                person_name=person.name,
+                signal_type="competition_win",
+                signal_category="competition",
+                signal_date="2026-06-01",
+                signal_strength=0.9,
+                source="public_web",
+                source_url="https://example.com/evidence",
+                summary="Won a documented public competition.",
+            )
+        )
+        body = self.container.subscriber_digest.upcoming()
         ids = [e["person_id"] for e in body["entries"]]
         self.assertIn(person.id, ids)
-        entry = next(e for e in body["entries"] if e["person_id"] == person.id)
-        self.assertTrue(entry["provisional"])
+
+    def test_min_score_setting_gates_eligibility(self):
+        person = _approved_person(self.container, "Score Gated", "scoregated")
+        self.container.digest_settings.set_min_score(1000)
+        body = self.container.subscriber_digest.upcoming()
+        ids = [e["person_id"] for e in body["entries"]]
+        self.assertNotIn(person.id, ids)
+        self.container.digest_settings.set_min_score(0)
+        body = self.container.subscriber_digest.upcoming()
+        ids = [e["person_id"] for e in body["entries"]]
+        self.assertIn(person.id, ids)
 
 
 class RecipeRescanAndSkipTests(unittest.TestCase):
@@ -254,6 +277,48 @@ class AdminGateTests(unittest.TestCase):
     def test_read_only_routes_stay_open(self):
         self.assertEqual(self.client.get("/api/discovery/recipes").status_code, 200)
         self.assertEqual(self.client.get("/api/digest/upcoming").status_code, 200)
+
+    def test_digest_settings_requires_admin_secret(self):
+        blocked = self.client.put("/api/digest/settings", json={"min_score": 55})
+        self.assertEqual(blocked.status_code, 401)
+        ok = self.client.put(
+            "/api/digest/settings",
+            json={"min_score": 55},
+            headers={"X-Admin-Secret": "operator-secret"},
+        )
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json()["min_score"], 55)
+
+
+class DigestSettingsRepositoryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        root = Path(self.temp_dir.name)
+        self.container = Container(
+            Settings(
+                db_path=root / "test.db",
+                database_url="",
+                out_dir=root / "out",
+                cron_secret="c",
+                discovery_background=False,
+                digest_background=False,
+            )
+        )
+
+    def tearDown(self):
+        self.container.db.close()
+        self.temp_dir.cleanup()
+
+    def test_default_min_score_is_forty(self):
+        self.assertEqual(self.container.digest_settings.get_min_score(), 40.0)
+
+    def test_set_min_score_persists(self):
+        self.container.digest_settings.set_min_score(75)
+        self.assertEqual(self.container.digest_settings.get_min_score(), 75.0)
+        # A fresh repository instance on the same db reads the persisted value.
+        from backend.db.repositories.digest_settings import DigestSettingsRepository
+        reloaded = DigestSettingsRepository(self.container.db)
+        self.assertEqual(reloaded.get_min_score(), 75.0)
 
 
 if __name__ == "__main__":

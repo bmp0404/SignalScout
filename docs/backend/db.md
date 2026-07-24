@@ -27,6 +27,16 @@ Defines the `Database` connection provider, schema initialization, and the `Post
   - `Database.reset()` — drops all tables (via `pg_tables`/`CASCADE` on Postgres, or `sqlite_master` with foreign keys toggled off on SQLite) and recreates the schema; used by `build_db` for idempotent rebuilds.
   - `Database.close()` — closes the Postgres connection, or closes and clears all tracked SQLite connections across threads.
 
+## backend/db/repositories/digest_settings.py
+Self-creates the `digest_settings` table (single row, `id=1`), same convention as `provider_identities.py` / `discovery_recipes.py`. Holds the operator-adjustable minimum score a candidate must meet to be digest-eligible.
+
+- `TABLE_SQL` — module-level DDL for `digest_settings` (`id INTEGER PRIMARY KEY CHECK (id = 1)`, `min_score REAL NOT NULL DEFAULT 40`).
+- `DEFAULT_MIN_SCORE` — `40.0`, matches the existing `flag_threshold` used elsewhere for the "flagged" badge.
+- `DigestSettingsRepository` — single-row settings access.
+  - `DigestSettingsRepository.__init__(db)` — creates the table if missing and inserts the default row (`INSERT OR IGNORE`) if absent.
+  - `DigestSettingsRepository.get_min_score() -> float` — reads the current threshold.
+  - `DigestSettingsRepository.set_min_score(value)` — persists a new threshold (0–100 validated by the API layer, not here).
+
 ## backend/db/repositories/__init__.py
 Empty file (no re-exports).
 

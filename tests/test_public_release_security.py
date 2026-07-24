@@ -59,7 +59,9 @@ class PublicReleaseSecurityTests(unittest.TestCase):
             cohort="discovery",
             score=50,
             github_username="reviewed",
+            evidence_tier="verified",
         )
+        person.email = "reviewed@example.com"
         self.container.persons.save(person)
         self.container.signals.save(
             Signal(

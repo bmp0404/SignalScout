@@ -33,6 +33,10 @@ class PageViewEvent(BaseModel):
     referrer: str | None = Field(default=None, max_length=500)
 
 
+class DigestSettingsRequest(BaseModel):
+    min_score: float = Field(ge=0, le=100)
+
+
 class CandidateReviewRequest(BaseModel):
     state: str
     why_now: str = Field(default="", max_length=2000)
@@ -209,6 +213,9 @@ def build_router(container: Container) -> APIRouter:
                 discovery["review_required"]
                 for discovery in provider_discoveries
             ),
+            "digest_eligible_total": len(
+                container.subscriber_digest.eligible_candidates(discoveries)
+            ),
         }
 
     @router.get("/candidates")
@@ -328,6 +335,21 @@ def build_router(container: Container) -> APIRouter:
         paginated by `offset` so each Refresh cycles to a fresh batch. Also
         returns auto-send status. Public/read-only."""
         return container.subscriber_digest.upcoming(offset=offset)
+
+    @router.get("/digest/settings")
+    def get_digest_settings():
+        return {"min_score": container.digest_settings.get_min_score()}
+
+    @router.put("/digest/settings")
+    def update_digest_settings(
+        payload: DigestSettingsRequest,
+        request: Request,
+        x_admin_secret: str | None = Header(default=None),
+    ):
+        _require_admin(container, x_admin_secret)
+        rate_limit(request, "digest-settings", 30, 60 * 60)
+        container.digest_settings.set_min_score(payload.min_score)
+        return {"min_score": container.digest_settings.get_min_score()}
 
     @router.get("/digest/preview")
     def preview_digest(email: str = Query(default="")):

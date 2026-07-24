@@ -5,6 +5,7 @@ from backend.config import Settings, load_settings
 from backend.db.database import Database
 from backend.db.repositories.candidate_reviews import CandidateReviewRepository
 from backend.db.repositories.concentrations import ConcentrationRepository
+from backend.db.repositories.digest_settings import DigestSettingsRepository
 from backend.db.repositories.digests import DigestRepository
 from backend.db.repositories.discovery_recipes import DiscoveryRecipeRepository
 from backend.db.repositories.enrichment import EnrichmentCacheRepository, EnrichmentUsageRepository
@@ -61,6 +62,7 @@ class Container:
         self.subscribers = SubscriberRepository(self.db)
         self.digest_sends = DigestSendRepository(self.db)
         self.feedback = FeedbackRepository(self.db)
+        self.digest_settings = DigestSettingsRepository(self.db)
 
         self.engine = ScoringEngine(self.settings.recency_window_days)
         self.resolver = EntityResolver(self.persons, self.signals, self.edges)
@@ -131,6 +133,7 @@ class Container:
             self.email_sender,
             self.settings.public_base_url,
             self.email_action_signer,
+            self.digest_settings,
             size=10,
         )
         self.discovery_job = DiscoveryJobManager(

@@ -61,7 +61,9 @@ class Phase4DigestTests(unittest.TestCase):
             current_location="San Francisco, CA",
             thesis="Building public developer infrastructure.",
             github_username="rauchg",
+            evidence_tier="verified",
         )
+        self.person.email = "rauchg@example.com"
         self.container.persons.save(self.person)
         self.container.signals.save_many(
             [

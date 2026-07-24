@@ -26,7 +26,7 @@ Backend pipeline order: `domain` → `db` → `scrapers` → `scoring` / `discov
 
 | Doc | Covers | What it is |
 |---|---|---|
-| [frontend/core.md](frontend/core.md) | `main.jsx`, `App.jsx`, `hooks/useAsyncData.js`, `index.css` | App entry, shell, shared data-loading hook, and global styling. |
+| [frontend/core.md](frontend/core.md) | `main.jsx`, `App.jsx`, `hooks/useAdmin.js`, `hooks/useAsyncData.js`, `index.css` | App entry, shell, operator-unlock + shared data-loading hooks, and global styling. |
 | [frontend/api.md](frontend/api.md) | `api/client.js` | The fetch wrapper and `api` object listing every backend endpoint the frontend calls. |
 | [frontend/pages.md](frontend/pages.md) | `pages/*` | The four page views: Discover, Backtest, Digest, and Pipeline. |
 | [frontend/components.md](frontend/components.md) | `components/*` | Reusable presentational components and view-model helpers shared across pages. |

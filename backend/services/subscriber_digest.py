@@ -34,6 +34,7 @@ class SubscriberDigestService:
         sender: EmailSender,
         public_base_url: str,
         action_signer: EmailActionSigner,
+        digest_settings,
         size: int = 10,
     ):
         self.subscribers = subscribers
@@ -42,6 +43,7 @@ class SubscriberDigestService:
         self.sender = sender
         self.public_base_url = public_base_url.rstrip("/")
         self.action_signer = action_signer
+        self.digest_settings = digest_settings
         self.size = size
 
     def build(
@@ -58,66 +60,53 @@ class SubscriberDigestService:
             else self.candidates.list_candidates("discovery")
         )
         sent_ids = self.sends.sent_person_ids(subscriber.id)
-        picks, provisional_ids = self._select_picks(candidates, sent_ids, subscriber=subscriber)
+        picks = self._select_picks(candidates, sent_ids, subscriber=subscriber)
         today = datetime.now(timezone.utc).date().isoformat()
         subject = f"Signal Scout — {len(picks)} people to know ({today})"
         return (
             EmailMessage(
                 subject=subject,
-                html=self._render_html(subscriber, picks, today, provisional_ids),
-                text=self._render_text(subscriber, picks, today, provisional_ids),
+                html=self._render_html(subscriber, picks, today),
+                text=self._render_text(subscriber, picks, today),
             ),
             [candidate["id"] for candidate in picks],
         )
+
+    def eligible_candidates(self, candidates: list[dict]) -> list[dict]:
+        """Digest eligibility: verified-tier evidence, reachable via 2+ contact
+        links, and score at or above the operator-adjustable minimum. No human
+        review step gates this — every discovered person is a candidate."""
+        min_score = self.digest_settings.get_min_score()
+        return [
+            candidate
+            for candidate in candidates
+            if candidate.get("evidence_tier") == "verified"
+            and self._has_contacts(candidate)
+            and float(candidate.get("score") or 0) >= min_score
+        ]
 
     def _select_picks(
         self,
         candidates: list[dict],
         exclude_ids: set[str],
         subscriber: Subscriber | None = None,
-    ) -> tuple[list[dict], set[str]]:
-        """Pick up to `size` people not in `exclude_ids`.
-
-        Primary pool is operator-approved + contactable, newest approvals first
-        (then subscriber preference/score). If that runs short, backfill with the
-        top-scored verified-tier contactable candidates so a digest never goes
-        empty between review sessions; those backfilled ids are returned so the
-        renderer can mark them as provisional (awaiting operator review)."""
-        approved = [
+    ) -> list[dict]:
+        """Pick up to `size` eligible people not in `exclude_ids`, highest
+        preference/score first."""
+        eligible = [
             candidate
-            for candidate in candidates
+            for candidate in self.eligible_candidates(candidates)
             if candidate["id"] not in exclude_ids
-            and candidate.get("approval_state") == "approved"
-            and candidate.get("contactable")
         ]
-        approved.sort(
+        eligible.sort(
             key=lambda candidate: (
-                candidate.get("approved_at") or "",
                 self._preference_rank(candidate, subscriber)
                 if subscriber is not None
-                else (0, float(candidate.get("score") or 0)),
+                else (0, float(candidate.get("score") or 0))
             ),
             reverse=True,
         )
-        picks = approved[: self.size]
-        provisional_ids: set[str] = set()
-        if len(picks) < self.size:
-            chosen = {candidate["id"] for candidate in picks}
-            # Backfill candidates are not yet operator-approved, so they won't carry
-            # the review `contactable` flag; gate them on real contact links instead.
-            fallback = [
-                candidate
-                for candidate in candidates
-                if candidate["id"] not in exclude_ids
-                and candidate["id"] not in chosen
-                and candidate.get("evidence_tier") == "verified"
-                and self._has_contacts(candidate)
-            ]
-            fallback.sort(key=lambda candidate: float(candidate.get("score") or 0), reverse=True)
-            for candidate in fallback[: self.size - len(picks)]:
-                picks.append(candidate)
-                provisional_ids.add(candidate["id"])
-        return picks, provisional_ids
+        return eligible[: self.size]
 
     @staticmethod
     def _has_contacts(candidate: dict) -> bool:
@@ -128,56 +117,32 @@ class SubscriberDigestService:
         """Operator/Cory-facing preview of the digest lineup, paginated so each
         Refresh advances to a fresh batch.
 
-        The full approved + contactable pool is ordered with not-yet-featured
-        people first (so freshly-approved people surface at the top), then the
-        window of `size` people starting at `offset` is returned, wrapping around
-        the pool so repeated refreshes cycle through everyone rather than
-        re-showing the same top `size`. Unlike a per-subscriber email (which
-        never repeats), this keeps the tab full; verified-tier candidates with
-        2+ contacts backfill any remaining slots (flagged provisional) when the
-        approved pool is smaller than `size`. `next_offset` is what the client
-        should pass on the next Refresh."""
+        The full eligible pool is ordered with not-yet-featured people first (so
+        freshly-qualifying people surface at the top), then the window of `size`
+        people starting at `offset` is returned, wrapping around the pool so
+        repeated refreshes cycle through everyone rather than re-showing the
+        same top `size`. Unlike a per-subscriber email (which never repeats),
+        this keeps the tab full. `next_offset` is what the client should pass on
+        the next Refresh."""
         self.candidates.rescore_all()
         candidates = self.candidates.list_candidates("discovery")
         featured = self.sends.all_sent_person_ids()
-        approved = [
-            candidate
-            for candidate in candidates
-            if candidate.get("approval_state") == "approved" and candidate.get("contactable")
-        ]
-        approved.sort(
+        eligible = self.eligible_candidates(candidates)
+        eligible.sort(
             key=lambda candidate: (
                 candidate["id"] not in featured,  # unfeatured first (rotation front)
-                candidate.get("approved_at") or "",
                 float(candidate.get("score") or 0),
             ),
             reverse=True,
         )
-        pool_size = len(approved)
+        pool_size = len(eligible)
         if pool_size:
             start = offset % pool_size
-            rotated = approved[start:] + approved[:start]
+            rotated = eligible[start:] + eligible[:start]
         else:
             rotated = []
         picks = rotated[: self.size]
-        provisional_ids: set[str] = set()
-        if len(picks) < self.size:
-            chosen = {candidate["id"] for candidate in picks}
-            fallback = [
-                candidate
-                for candidate in candidates
-                if candidate["id"] not in chosen
-                and candidate.get("evidence_tier") == "verified"
-                and self._has_contacts(candidate)
-            ]
-            fallback.sort(key=lambda candidate: float(candidate.get("score") or 0), reverse=True)
-            for candidate in fallback[: self.size - len(picks)]:
-                picks.append(candidate)
-                provisional_ids.add(candidate["id"])
-        entries = [
-            self._entry(candidate, candidate["id"] in provisional_ids)
-            for candidate in picks
-        ]
+        entries = [self._entry(candidate) for candidate in picks]
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "entries": entries,
@@ -202,7 +167,7 @@ class SubscriberDigestService:
         }
 
     @staticmethod
-    def _entry(candidate: dict, provisional: bool) -> dict:
+    def _entry(candidate: dict) -> dict:
         school = candidate.get("school") or ""
         year = candidate.get("graduation_year")
         school_line = f"{school} '{str(year)[2:]}" if school and year else school
@@ -232,7 +197,6 @@ class SubscriberDigestService:
             "warm_intro": candidate.get("warm_intro") or "",
             "why_now": candidate.get("reviewed_why_now") or candidate.get("why_now") or "",
             "contact_links": candidate.get("contact_links") or {},
-            "provisional": provisional,
         }
 
     def preview(self, subscriber: Subscriber) -> dict:
@@ -386,19 +350,11 @@ class SubscriberDigestService:
         subscriber: Subscriber,
         picks: list[dict],
         today: str,
-        provisional_ids: set[str] | None = None,
     ) -> str:
         esc = html.escape
-        provisional_ids = provisional_ids or set()
         blocks: list[str] = []
         for candidate in picks:
             person_id = candidate["id"]
-            provisional_note = (
-                '<div style="color:#8a6d1f;font:11px ui-monospace,monospace;margin-top:8px">'
-                "Provisional — surfaced by evidence, pending operator review</div>"
-                if person_id in provisional_ids
-                else ""
-            )
             signals = candidate.get("top_signals") or []
             signal_items = "".join(
                 f"<li>{esc(signal.get('summary') or signal.get('type') or 'Signal recorded')}</li>"
@@ -441,7 +397,6 @@ class SubscriberDigestService:
                   <p style="font-size:15px;line-height:1.45;margin:12px 0">{esc(description)}</p>
                   <div style="font-size:13px;line-height:1.5"><strong>Triggering signals</strong><ul style="padding-left:20px;margin:6px 0 12px">{signal_items}</ul></div>
                   <div style="font:12px ui-monospace,monospace">{links}{provenance_link}</div>
-                  {provisional_note}
                   <div style="border-top:1px solid #e4e0d2;margin-top:14px;padding-top:10px;font-size:13px">
                     Useful?
                     <a href="{esc(up_url, quote=True)}" style="text-decoration:none;margin-left:8px">👍 Yes</a>
@@ -469,9 +424,7 @@ class SubscriberDigestService:
         subscriber: Subscriber,
         picks: list[dict],
         today: str,
-        provisional_ids: set[str] | None = None,
     ) -> str:
-        provisional_ids = provisional_ids or set()
         lines = [f"SIGNAL SCOUT — {len(picks)} people — {today}", ""]
         for index, candidate in enumerate(picks, 1):
             context = " · ".join(
@@ -491,8 +444,6 @@ class SubscriberDigestService:
             lines.extend([f"{index}. {candidate['name']} ({float(candidate.get('score') or 0):.0f})"])
             if context:
                 lines.append(context)
-            if candidate["id"] in provisional_ids:
-                lines.append("[Provisional — surfaced by evidence, pending operator review]")
             lines.append(description)
             lines.append("Triggering signals:")
             for signal in candidate.get("top_signals") or []:
