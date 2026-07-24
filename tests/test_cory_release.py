@@ -300,14 +300,11 @@ class AdminGateTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/discovery/recipes").status_code, 200)
         self.assertEqual(self.client.get("/api/digest/upcoming").status_code, 200)
 
-    def test_digest_settings_requires_admin_secret(self):
-        blocked = self.client.put("/api/digest/settings", json={"min_score": 55})
-        self.assertEqual(blocked.status_code, 401)
-        ok = self.client.put(
-            "/api/digest/settings",
-            json={"min_score": 55},
-            headers={"X-Admin-Secret": "operator-secret"},
-        )
+    def test_digest_settings_is_not_admin_gated(self):
+        # Unlike send/generate/recipe-approve, tuning the min-score threshold
+        # doesn't spend provider credit or email subscribers, so it's public
+        # even with ADMIN_SECRET configured.
+        ok = self.client.put("/api/digest/settings", json={"min_score": 55})
         self.assertEqual(ok.status_code, 200)
         self.assertEqual(ok.json()["min_score"], 55)
 

@@ -330,10 +330,11 @@ def build_router(container: Container) -> APIRouter:
 
     @router.get("/digest/upcoming")
     def upcoming_digest(offset: int = Query(default=0, ge=0)):
-        """The digest lineup subscribers receive: approved + contactable picks
-        (verified-tier backfill), ordered with not-yet-featured people first and
-        paginated by `offset` so each Refresh cycles to a fresh batch. Also
-        returns auto-send status. Public/read-only."""
+        """The digest lineup subscribers receive: candidates at or above the
+        adjustable minimum score with at least one contact link, ordered with
+        not-yet-featured people first and paginated by `offset` so each
+        Refresh cycles to a fresh batch. Also returns auto-send status.
+        Public/read-only."""
         return container.subscriber_digest.upcoming(offset=offset)
 
     @router.get("/digest/settings")
@@ -341,12 +342,10 @@ def build_router(container: Container) -> APIRouter:
         return {"min_score": container.digest_settings.get_min_score()}
 
     @router.put("/digest/settings")
-    def update_digest_settings(
-        payload: DigestSettingsRequest,
-        request: Request,
-        x_admin_secret: str | None = Header(default=None),
-    ):
-        _require_admin(container, x_admin_secret)
+    def update_digest_settings(payload: DigestSettingsRequest, request: Request):
+        # Public/unauthenticated on purpose: this only tunes which discovered
+        # people qualify for the digest, unlike send/generate (which spend
+        # provider credit or actually email subscribers) — those stay admin-gated.
         rate_limit(request, "digest-settings", 30, 60 * 60)
         container.digest_settings.set_min_score(payload.min_score)
         return {"min_score": container.digest_settings.get_min_score()}

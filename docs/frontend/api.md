@@ -14,7 +14,7 @@ JSON error bodies are surfaced via `err.detail`/`err.status`. Read endpoints are
 - `api.latestDigest() -> Promise` — `GET /api/digests/latest`.
 - `api.upcomingDigest(offset = 0) -> Promise` — `GET /api/digest/upcoming?offset=<offset>` (the digest-lineup preview + auto-send status; `offset` paginates to a fresh batch, using the prior response's `next_offset`).
 - `api.digestSettings() -> Promise` — `GET /api/digest/settings` (current `min_score`).
-- `api.updateDigestSettings(payload) -> Promise` — `PUT /api/digest/settings` (sends `X-Admin-Secret`) with a JSON body `{ min_score }`.
+- `api.updateDigestSettings(payload) -> Promise` — `PUT /api/digest/settings` (public, no admin header) with a JSON body `{ min_score }`.
 - `api.generateDigest() -> Promise` — `POST /api/digests/generate` (sends `X-Admin-Secret`).
 - `api.sendDigest() -> Promise` — `POST /api/digests/send` (sends `X-Admin-Secret`).
 - `api.subscribe(payload) -> Promise` — `POST /api/subscribers` with a JSON body.

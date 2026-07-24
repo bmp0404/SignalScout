@@ -35,7 +35,7 @@ export const api = {
   digestSettings: () => request('/api/digest/settings'),
   updateDigestSettings: (payload) => request('/api/digest/settings', {
     method: 'PUT',
-    headers: { ...adminHeaders(), 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   }),
   generateDigest: () => request('/api/digests/generate', { method: 'POST', headers: adminHeaders() }),
