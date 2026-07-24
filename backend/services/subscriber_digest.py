@@ -125,14 +125,44 @@ class SubscriberDigestService:
         return sum(bool(links.get(key)) for key in ("github", "linkedin", "x", "email", "site")) >= 2
 
     def upcoming(self) -> dict:
-        """Operator-facing preview of the NEXT automated digest. Selection mirrors
-        real subscriber emails (approved + contactable, verified-tier backfill),
-        but excludes everyone already featured in any delivered digest so the
-        preview rotates forward as automated sends fire."""
+        """Operator/Cory-facing preview of the digest lineup. Shows up to `size`
+        approved + contactable people, ordering not-yet-featured people first so
+        the preview rotates forward as automated sends fire — but, unlike a
+        per-subscriber email (which never repeats), it keeps filling with
+        already-featured approved people so the tab stays full instead of
+        emptying out once most of the pool has gone out. Verified-tier candidates
+        backfill any remaining slots, flagged provisional."""
         self.candidates.rescore_all()
         candidates = self.candidates.list_candidates("discovery")
         featured = self.sends.all_sent_person_ids()
-        picks, provisional_ids = self._select_picks(candidates, featured, subscriber=None)
+        approved = [
+            candidate
+            for candidate in candidates
+            if candidate.get("approval_state") == "approved" and candidate.get("contactable")
+        ]
+        approved.sort(
+            key=lambda candidate: (
+                candidate["id"] not in featured,  # unfeatured first (rotation front)
+                candidate.get("approved_at") or "",
+                float(candidate.get("score") or 0),
+            ),
+            reverse=True,
+        )
+        picks = approved[: self.size]
+        provisional_ids: set[str] = set()
+        if len(picks) < self.size:
+            chosen = {candidate["id"] for candidate in picks}
+            fallback = [
+                candidate
+                for candidate in candidates
+                if candidate["id"] not in chosen
+                and candidate.get("evidence_tier") == "verified"
+                and self._has_contacts(candidate)
+            ]
+            fallback.sort(key=lambda candidate: float(candidate.get("score") or 0), reverse=True)
+            for candidate in fallback[: self.size - len(picks)]:
+                picks.append(candidate)
+                provisional_ids.add(candidate["id"])
         entries = [
             self._entry(candidate, candidate["id"] in provisional_ids)
             for candidate in picks

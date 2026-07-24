@@ -118,17 +118,19 @@ class UpcomingDigestTests(unittest.TestCase):
         self.container.db.close()
         self.temp_dir.cleanup()
 
-    def test_upcoming_rotates_past_already_featured(self):
-        person = _approved_person(self.container, "Ada Lovelace", "ada")
-        body = self.client.get("/api/digest/upcoming").json()
-        self.assertEqual([e["person_id"] for e in body["entries"]], [person.id])
-        self.assertIn("auto_send", body)
-        # Once featured in a delivered digest, they drop out of the next preview.
+    def test_upcoming_orders_unfeatured_first_but_stays_full(self):
+        featured_person = _approved_person(self.container, "Ada Lovelace", "ada")
+        fresh_person = _approved_person(self.container, "Katherine Johnson", "katherine")
+        # Ada has already gone out in a delivered digest; Katherine hasn't.
         subscriber = self.container.subscribers.subscribe("cory@example.com", "every_3_days", {})
-        self.container.digest_sends.record_many(subscriber.id, [person.id], "msg-1")
-        after = self.client.get("/api/digest/upcoming").json()
-        self.assertEqual(after["entries"], [])
-        self.assertEqual(after["featured_count"], 1)
+        self.container.digest_sends.record_many(subscriber.id, [featured_person.id], "msg-1")
+        body = self.client.get("/api/digest/upcoming").json()
+        ids = [e["person_id"] for e in body["entries"]]
+        # Both still appear (the tab stays full), with the unfeatured person first.
+        self.assertEqual(set(ids), {featured_person.id, fresh_person.id})
+        self.assertEqual(ids[0], fresh_person.id)
+        self.assertEqual(body["featured_count"], 1)
+        self.assertIn("auto_send", body)
 
     def test_verified_tier_backfills_as_provisional(self):
         # No approved candidates, but a verified-tier person with 2 contact
