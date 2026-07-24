@@ -12,7 +12,7 @@ Loads and renders the historical backtest report: headline recall/lead-time stat
 Public digest view showing the rotating "up next" list subscribers receive, plus auto-send status; the manual send is operator-gated.
 
 - `CADENCE_LABELS` / `autoSendSummary(auto)` — format the auto-send status line ("Sends automatically every 3 days · N active subscribers · last sent YYYY-MM-DD").
-- `Digest()` — loads the upcoming digest via `api.upcomingDigest()` through the shared `useAsyncData` hook (REFRESH re-runs it), renders the auto-send status banner and each upcoming entry (rank, name + `provisional` badge for verified-tier backfill, school/location, thesis, top signals, orbit/intro context, why-now, `ContactLinks`), and exposes a `SEND NOW` button (`api.sendDigest()`) wrapped in `AdminOnly` so only unlocked operators can trigger an immediate send. Also renders `DigestSignup`.
+- `Digest()` — loads the upcoming digest via `api.upcomingDigest(offset)` through the shared `useAsyncData` hook, tracking a pagination `offsetRef` that the `NEW BATCH` button advances to the response's `next_offset` so each click cycles to a fresh batch of people; renders the auto-send status banner and each entry (rank, name + `provisional` badge for verified-tier backfill, school/location, thesis, top signals, orbit/intro context, why-now, `ContactLinks`), and exposes a `SEND NOW` button (`api.sendDigest()`) wrapped in `AdminOnly` so only unlocked operators can trigger an immediate send. Also renders `DigestSignup`.
 
 ## frontend/src/pages/Discover.jsx
 Primary review workspace: loads discovery candidates and sorts them into Unreviewed / Approved / Rejected buckets with one-click Approve/Reject.

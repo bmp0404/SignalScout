@@ -132,6 +132,20 @@ class UpcomingDigestTests(unittest.TestCase):
         self.assertEqual(body["featured_count"], 1)
         self.assertIn("auto_send", body)
 
+    def test_upcoming_offset_paginates_to_a_fresh_batch(self):
+        # A pool larger than the digest size (10): the default batch and the
+        # next_offset batch are disjoint, cycling through new people each refresh.
+        for i in range(14):
+            _approved_person(self.container, f"Person {i}", f"user{i}")
+        first = self.client.get("/api/digest/upcoming").json()
+        self.assertEqual(len(first["entries"]), 10)
+        self.assertEqual(first["pool_size"], 14)
+        nxt = self.client.get(f"/api/digest/upcoming?offset={first['next_offset']}").json()
+        first_ids = {e["person_id"] for e in first["entries"]}
+        next_ids = {e["person_id"] for e in nxt["entries"]}
+        # The 4 people not shown in batch one lead batch two (fresh people surface).
+        self.assertTrue(next_ids - first_ids)
+
     def test_verified_tier_backfills_as_provisional(self):
         # No approved candidates, but a verified-tier person with 2 contact
         # methods should backfill the preview, flagged provisional.

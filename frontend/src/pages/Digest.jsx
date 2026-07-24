@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import ContactLinks from '../components/ContactLinks.jsx';
 import DigestSignup from '../components/DigestSignup.jsx';
@@ -32,16 +32,22 @@ export default function Digest() {
   const [busy, setBusy] = useState(false);
   const [sendReceipt, setSendReceipt] = useState(null);
   const [error, setError] = useState('');
+  // Pagination cursor: each Refresh advances to the next batch (the server wraps
+  // around the pool). A ref so the useAsyncData loader reads the latest value.
+  const offsetRef = useRef(0);
   const {
     data: digest,
     state: loadState,
     reload,
-  } = useAsyncData(() => api.upcomingDigest());
+  } = useAsyncData(() => api.upcomingDigest(offsetRef.current));
 
   const refresh = async () => {
     setError('');
     setSendReceipt(null);
     setBusy(true);
+    if (digest && Number.isInteger(digest.next_offset)) {
+      offsetRef.current = digest.next_offset;
+    }
     try {
       await reload();
     } catch {
@@ -85,9 +91,10 @@ export default function Digest() {
           <button
             onClick={refresh}
             disabled={busy}
+            title="Show the next batch of people from the pool"
             className="border border-line text-ink-faint font-mono text-xs px-4 py-2 rounded-sm hover:border-olive hover:text-olive disabled:opacity-40"
           >
-            {busy ? 'WORKING…' : 'REFRESH'}
+            {busy ? 'WORKING…' : 'NEW BATCH'}
           </button>
           <AdminOnly>
             <button

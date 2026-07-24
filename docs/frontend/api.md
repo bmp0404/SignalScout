@@ -12,7 +12,7 @@ JSON error bodies are surfaced via `err.detail`/`err.status`. Read endpoints are
 - `api.candidate(id) -> Promise` — `GET /api/candidates/:id`.
 - `api.backtest() -> Promise` — `GET /api/backtest`.
 - `api.latestDigest() -> Promise` — `GET /api/digests/latest`.
-- `api.upcomingDigest() -> Promise` — `GET /api/digest/upcoming` (the rotating next-digest preview + auto-send status).
+- `api.upcomingDigest(offset = 0) -> Promise` — `GET /api/digest/upcoming?offset=<offset>` (the digest-lineup preview + auto-send status; `offset` paginates to a fresh batch, using the prior response's `next_offset`).
 - `api.generateDigest() -> Promise` — `POST /api/digests/generate` (sends `X-Admin-Secret`).
 - `api.sendDigest() -> Promise` — `POST /api/digests/send` (sends `X-Admin-Secret`).
 - `api.subscribe(payload) -> Promise` — `POST /api/subscribers` with a JSON body.

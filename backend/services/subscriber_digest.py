@@ -124,14 +124,19 @@ class SubscriberDigestService:
         links = candidate.get("contact_links") or {}
         return sum(bool(links.get(key)) for key in ("github", "linkedin", "x", "email", "site")) >= 2
 
-    def upcoming(self) -> dict:
-        """Operator/Cory-facing preview of the digest lineup. Shows up to `size`
-        approved + contactable people, ordering not-yet-featured people first so
-        the preview rotates forward as automated sends fire — but, unlike a
-        per-subscriber email (which never repeats), it keeps filling with
-        already-featured approved people so the tab stays full instead of
-        emptying out once most of the pool has gone out. Verified-tier candidates
-        backfill any remaining slots, flagged provisional."""
+    def upcoming(self, offset: int = 0) -> dict:
+        """Operator/Cory-facing preview of the digest lineup, paginated so each
+        Refresh advances to a fresh batch.
+
+        The full approved + contactable pool is ordered with not-yet-featured
+        people first (so freshly-approved people surface at the top), then the
+        window of `size` people starting at `offset` is returned, wrapping around
+        the pool so repeated refreshes cycle through everyone rather than
+        re-showing the same top `size`. Unlike a per-subscriber email (which
+        never repeats), this keeps the tab full; verified-tier candidates with
+        2+ contacts backfill any remaining slots (flagged provisional) when the
+        approved pool is smaller than `size`. `next_offset` is what the client
+        should pass on the next Refresh."""
         self.candidates.rescore_all()
         candidates = self.candidates.list_candidates("discovery")
         featured = self.sends.all_sent_person_ids()
@@ -148,7 +153,13 @@ class SubscriberDigestService:
             ),
             reverse=True,
         )
-        picks = approved[: self.size]
+        pool_size = len(approved)
+        if pool_size:
+            start = offset % pool_size
+            rotated = approved[start:] + approved[:start]
+        else:
+            rotated = []
+        picks = rotated[: self.size]
         provisional_ids: set[str] = set()
         if len(picks) < self.size:
             chosen = {candidate["id"] for candidate in picks}
@@ -172,6 +183,9 @@ class SubscriberDigestService:
             "entries": entries,
             "auto_send": self._auto_send_status(),
             "featured_count": len(featured),
+            "pool_size": pool_size,
+            "offset": offset,
+            "next_offset": offset + self.size,
         }
 
     def _auto_send_status(self) -> dict:

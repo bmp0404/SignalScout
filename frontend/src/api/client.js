@@ -31,7 +31,7 @@ export const api = {
   candidate: (id) => request(`/api/candidates/${id}`),
   backtest: () => request('/api/backtest'),
   latestDigest: () => request('/api/digests/latest'),
-  upcomingDigest: () => request('/api/digest/upcoming'),
+  upcomingDigest: (offset = 0) => request(`/api/digest/upcoming?offset=${offset}`),
   generateDigest: () => request('/api/digests/generate', { method: 'POST', headers: adminHeaders() }),
   sendDigest: () => request('/api/digests/send', { method: 'POST', headers: adminHeaders() }),
   subscribe: (payload) => request('/api/subscribers', {

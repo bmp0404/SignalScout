@@ -322,11 +322,12 @@ def build_router(container: Container) -> APIRouter:
         return {"summary": container.subscriber_digest.send_to_active()}
 
     @router.get("/digest/upcoming")
-    def upcoming_digest():
-        """The next automated digest as subscribers will receive it: approved +
-        contactable picks (verified-tier backfill), rotating forward past everyone
-        already featured, plus auto-send status. Public/read-only."""
-        return container.subscriber_digest.upcoming()
+    def upcoming_digest(offset: int = Query(default=0, ge=0)):
+        """The digest lineup subscribers receive: approved + contactable picks
+        (verified-tier backfill), ordered with not-yet-featured people first and
+        paginated by `offset` so each Refresh cycles to a fresh batch. Also
+        returns auto-send status. Public/read-only."""
+        return container.subscriber_digest.upcoming(offset=offset)
 
     @router.get("/digest/preview")
     def preview_digest(email: str = Query(default="")):
