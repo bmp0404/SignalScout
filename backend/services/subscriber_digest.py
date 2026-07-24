@@ -73,17 +73,25 @@ class SubscriberDigestService:
         )
 
     def eligible_candidates(self, candidates: list[dict]) -> list[dict]:
-        """Digest eligibility: verified-tier evidence, reachable via 2+ contact
-        links, and score at or above the operator-adjustable minimum. No human
-        review step gates this — every discovered person is a candidate."""
+        """Digest eligibility: score at or above the operator-adjustable
+        minimum, plus at least one contact link (a digest entry with no way to
+        reach the person isn't useful). No human review step and no
+        evidence-tier gate — `evidence_tier == "verified"` is only ever set on
+        provider-search (PDL/Coresignal/Exa) discoveries, so requiring it
+        excluded the entire GitHub/contest-sourced majority of the pool by
+        construction, not by score."""
         min_score = self.digest_settings.get_min_score()
         return [
             candidate
             for candidate in candidates
-            if candidate.get("evidence_tier") == "verified"
-            and self._has_contacts(candidate)
-            and float(candidate.get("score") or 0) >= min_score
+            if float(candidate.get("score") or 0) >= min_score
+            and self._has_contact(candidate)
         ]
+
+    @staticmethod
+    def _has_contact(candidate: dict) -> bool:
+        links = candidate.get("contact_links") or {}
+        return any(links.get(key) for key in ("github", "linkedin", "x", "email", "site"))
 
     def _select_picks(
         self,
@@ -107,11 +115,6 @@ class SubscriberDigestService:
             reverse=True,
         )
         return eligible[: self.size]
-
-    @staticmethod
-    def _has_contacts(candidate: dict) -> bool:
-        links = candidate.get("contact_links") or {}
-        return sum(bool(links.get(key)) for key in ("github", "linkedin", "x", "email", "site")) >= 2
 
     def upcoming(self, offset: int = 0) -> dict:
         """Operator/Cory-facing preview of the digest lineup, paginated so each

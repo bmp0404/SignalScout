@@ -1,7 +1,6 @@
 """Tests for the Cory-ready release: interval digest cadence, the rotating
-"upcoming" digest preview over the verified+contactable+score-gated pool,
-recipe re-scan after the cadence window, run skip reasons, and the operator
-(ADMIN_SECRET) gate."""
+"upcoming" digest preview over the score-gated pool, recipe re-scan after the
+cadence window, run skip reasons, and the operator (ADMIN_SECRET) gate."""
 
 import tempfile
 import unittest
@@ -150,14 +149,15 @@ class UpcomingDigestTests(unittest.TestCase):
         # The 4 people not shown in batch one lead batch two (fresh people surface).
         self.assertTrue(next_ids - first_ids)
 
-    def test_verified_contactable_candidate_appears_without_review(self):
-        # No human review step gates eligibility: a verified-tier, contactable
-        # person with a qualifying score appears on its own, never reviewed.
+    def test_score_gated_candidate_appears_without_review_or_tier(self):
+        # No human review step and no evidence-tier requirement gates
+        # eligibility: a qualifying score plus one contact link is enough. (A
+        # GitHub/contest-sourced discovery never gets evidence_tier set at
+        # all, so requiring "verified" would exclude it regardless of score.)
         person = Person(
             name="Grace Hopper", cohort="discovery", score=70.0,
-            github_username="grace", evidence_tier="verified",
+            github_username="grace",
         )
-        person.email = "grace@example.com"
         self.container.persons.save(person)
         self.container.signals.save(
             Signal(
@@ -175,6 +175,28 @@ class UpcomingDigestTests(unittest.TestCase):
         body = self.container.subscriber_digest.upcoming()
         ids = [e["person_id"] for e in body["entries"]]
         self.assertIn(person.id, ids)
+
+    def test_no_contact_candidate_is_excluded(self):
+        # A qualifying score with zero contact links (no github/linkedin/x/
+        # email/site) is still excluded — nobody can reach this person.
+        person = Person(name="No Contact", cohort="discovery", score=70.0)
+        self.container.persons.save(person)
+        self.container.signals.save(
+            Signal(
+                person_id=person.id,
+                person_name=person.name,
+                signal_type="competition_win",
+                signal_category="competition",
+                signal_date="2026-06-01",
+                signal_strength=0.9,
+                source="public_web",
+                source_url="https://example.com/evidence",
+                summary="Won a documented public competition.",
+            )
+        )
+        body = self.container.subscriber_digest.upcoming()
+        ids = [e["person_id"] for e in body["entries"]]
+        self.assertNotIn(person.id, ids)
 
     def test_min_score_setting_gates_eligibility(self):
         person = _approved_person(self.container, "Score Gated", "scoregated")

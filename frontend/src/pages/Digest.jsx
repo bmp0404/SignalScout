@@ -154,28 +154,26 @@ export default function Digest() {
         </p>
       )}
 
-      <AdminOnly>
-        <div className="flex flex-wrap items-center gap-2 mb-5 font-mono text-xs">
-          <label htmlFor="digest-min-score" className="text-ink-faint">Minimum score</label>
-          <input
-            id="digest-min-score"
-            type="number"
-            min="0"
-            max="100"
-            value={minScoreInput}
-            onChange={(e) => setMinScoreInput(e.target.value)}
-            className="w-20 border border-line rounded-sm px-2 py-1"
-          />
-          <button
-            onClick={saveMinScore}
-            disabled={settingsBusy || Number(minScoreInput) === minScore}
-            className="border border-line text-ink-soft px-3 py-1 rounded-sm hover:border-olive hover:text-olive disabled:opacity-40"
-          >
-            {settingsBusy ? 'SAVING…' : 'SAVE'}
-          </button>
-          {settingsError && <span className="text-red-700">{settingsError}</span>}
-        </div>
-      </AdminOnly>
+      <div className="flex flex-wrap items-center gap-2 mb-5 font-mono text-xs">
+        <label htmlFor="digest-min-score" className="text-ink-faint">Minimum score</label>
+        <input
+          id="digest-min-score"
+          type="number"
+          min="0"
+          max="100"
+          value={minScoreInput}
+          onChange={(e) => setMinScoreInput(e.target.value)}
+          className="w-20 border border-line rounded-sm px-2 py-1"
+        />
+        <button
+          onClick={saveMinScore}
+          disabled={settingsBusy || Number(minScoreInput) === minScore}
+          className="border border-line text-ink-soft px-3 py-1 rounded-sm hover:border-olive hover:text-olive disabled:opacity-40"
+        >
+          {settingsBusy ? 'SAVING…' : 'SAVE'}
+        </button>
+        {settingsError && <span className="text-red-700">{settingsError}</span>}
+      </div>
 
       {auto && (
         <p className="font-mono text-[11px] text-olive border border-olive/40 rounded-sm px-3 py-2 mb-5">
