@@ -28,6 +28,10 @@ _INSERT_OR_REPLACE_RE = re.compile(
     r"^\s*INSERT\s+OR\s+REPLACE\s+INTO\s+(?P<table>[\w\"]+)\s*\((?P<columns>[^)]+)\)",
     re.IGNORECASE | re.DOTALL,
 )
+_INSERT_OR_IGNORE_RE = re.compile(
+    r"^\s*INSERT\s+OR\s+IGNORE\s+INTO\s+(?P<table>[\w\"]+)",
+    re.IGNORECASE,
+)
 _INSERT_RE = re.compile(r"^\s*INSERT\s+INTO\s+(?P<table>[\w\"]+)", re.IGNORECASE)
 _UPSERT_ARITHMETIC_RE = re.compile(
     r"(?P<prefix>\bDO\s+UPDATE\s+SET\s+)(?P<column>\w+)(?P<equals>\s*=\s*)"
@@ -127,6 +131,10 @@ class PostgresConnection:
         match = _INSERT_OR_REPLACE_RE.match(sql)
         if match:
             sql = self._to_upsert(sql, match)
+        else:
+            ignore_match = _INSERT_OR_IGNORE_RE.match(sql)
+            if ignore_match:
+                sql = self._to_insert_ignore(sql, ignore_match)
         sql = self._qualify_upsert_arithmetic(sql)
         return sql
 
@@ -143,6 +151,15 @@ class PostgresConnection:
         if updates:
             return body + conflict + " DO UPDATE SET " + ", ".join(updates)
         return body + conflict + " DO NOTHING"
+
+    def _to_insert_ignore(self, sql: str, match: "re.Match[str]") -> str:
+        """INSERT OR IGNORE -> INSERT ... ON CONFLICT (pk) DO NOTHING (portable no-clobber insert)."""
+        table = match.group("table").strip('"')
+        body = re.sub(r"^\s*INSERT\s+OR\s+IGNORE\s+", "INSERT ", sql, flags=re.IGNORECASE)
+        pk_columns = self._primary_key(table)
+        if not pk_columns:
+            return body
+        return body + f" ON CONFLICT ({', '.join(pk_columns)}) DO NOTHING"
 
     @staticmethod
     def _qualify_upsert_arithmetic(sql: str) -> str:
